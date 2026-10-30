@@ -14,7 +14,6 @@ fn d512() -> u32 { 512 }
 #[derive(Deserialize)]
 #[allow(dead_code)]
 struct PathResp { path: String }
-#[derive(Deserialize)]
 #[allow(dead_code)]
 #[derive(Deserialize)]
 struct GrantResp { granted: bool }

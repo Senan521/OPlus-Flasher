@@ -24,7 +24,18 @@ fn load_key(p: &Path) -> Result<RsaPrivateKey, String> {
 
 /// Android's "RSAPublicKey" struct (2048-bit): len, n0inv, n[64], rr[64], exponent.
 fn android_pubkey(k: &RsaPrivateKey) -> Vec<u8> {
-    let words = |x: &BigUint| { let mut d = x.to_u32_digits(); d.resize(64, 0); d };
+    let words = |x: &BigUint| {
+        let bytes = x.to_bytes_le();
+        let mut d = vec![0u32; 64];
+
+        for (i, chunk) in bytes.chunks(4).enumerate().take(64) {
+            let mut word = [0u8; 4];
+            word[..chunk.len()].copy_from_slice(chunk);
+            d[i] = u32::from_le_bytes(word);
+        }
+
+        d
+    };
     let n = k.n();
     let nd = words(n);
     let n0 = nd[0];
