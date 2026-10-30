@@ -56,6 +56,9 @@ jobs:
       - name: Initialize Android
         run: npm run tauri android init -- --ci
 
+      - name: Generate App Icons
+        run: npm run tauri icon src-tauri/icons/icon.png
+
       - name: Apply Android customizations
         run: bash scripts/setup-android.sh
 
