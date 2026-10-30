@@ -1,4 +1,3 @@
-
 name: OPlus Flasher Android APK
 
 on:
@@ -38,8 +37,8 @@ jobs:
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
-  with:
-    packages: ''
+        with:
+          packages: ''
 
       - name: Install Android SDK
         run: |
@@ -70,4 +69,3 @@ jobs:
           path: LFA/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
           if-no-files-found: error
           retention-days: 14
-
