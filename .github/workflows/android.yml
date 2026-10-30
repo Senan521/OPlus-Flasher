@@ -1,0 +1,71 @@
+
+name: OPlus Flasher Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "LFA/**"
+      - ".github/workflows/android.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    name: Build Android Debug APK
+    runs-on: ubuntu-24.04
+
+    defaults:
+      run:
+        working-directory: LFA
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK
+        run: |
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018"
+          echo "NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Initialize Android
+        run: npm run tauri android init -- --ci
+
+      - name: Apply Android customizations
+        run: bash scripts/setup-android.sh
+
+      - name: Build APK
+        run: npm run tauri android build -- --debug --apk --target aarch64 --ci
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: OPlus-Flasher-Android-debug
+          path: LFA/src-tauri/gen/android/app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
