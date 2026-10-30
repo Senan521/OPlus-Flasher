@@ -1,0 +1,40 @@
+[package]
+name = "linux-flasher"
+version = "0.2.0"
+edition = "2021"
+
+[lib]
+name = "linux_flasher_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+nusb = "0.1"
+futures-lite = "2"
+libc = "0.2"
+prost = "0.13"
+ureq = { version = "2", default-features = false, features = ["tls"] }
+sha2 = "0.10"
+tar = "0.4"
+rsa = "0.9"
+sha1 = { version = "0.10", features = ["oid"] }
+base64 = "0.22"
+rand_core = { version = "0.6", features = ["getrandom"] }
+zip = { version = "2", default-features = false }
+bzip2 = "0.4"
+xz2 = "0.1"
+zstd = "0.13"
+
+# RSA anahtar üretimi debug derlemede çok yavaş; bağımlılıkları optimize et
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
