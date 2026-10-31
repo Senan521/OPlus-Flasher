@@ -77,20 +77,18 @@
   const names = $derived(images.filter(i => picked[i.name]).map(i => i.name));
   // Tek akış (Stock ROM + AOSP birleşik; klasörde olmayan imajlar zaten listelenmez/atlanır):
   // bootloader'da A/B, fastbootd'de yalnızca A, mantıksal bölümler silinip yeniden oluşturulur, sonda set_active a.
-  let cosOn = $state(false), cosFolder = $state('');
   const BL = ['boot', 'dtbo', 'init_boot', 'modem', 'recovery', 'vbmeta', 'vbmeta_system', 'vbmeta_vendor', 'vendor_boot'];
   const LOGICAL = ['my_bigball', 'my_carrier', 'my_engineering', 'my_heytap', 'my_manifest', 'my_product', 'my_region', 'my_stock', 'odm', 'product', 'system', 'system_dlkm', 'system_ext', 'vendor', 'vendor_dlkm', 'my_company', 'my_preload'];
   const place = (n) => BL.includes(n) ? 'bootloader · A/B' : LOGICAL.includes(n) ? 'fastbootd · mantıksal (A)' : 'fastbootd · A';
   const steps = $derived.by(() => {
-    const cos = cosOn && cosFolder;
-    const bl = names.filter(n => BL.includes(n)), lo = LOGICAL.filter(n => names.includes(n) || (cos && n === 'my_region')), fw = names.filter(n => !BL.includes(n) && !LOGICAL.includes(n));
+    // oplusstanvbk ve my_region klasörde varsa özel bir şey gerekmez: ilki fastbootd'de _a, ikincisi mantıksal bölüm olarak yazılır.
+    const bl = names.filter(n => BL.includes(n)), lo = LOGICAL.filter(n => names.includes(n)), fw = names.filter(n => !BL.includes(n) && !LOGICAL.includes(n));
     return [
       ...bl.flatMap(n => [{ p: `${n}_a`, n }, { p: `${n}_b`, n }]),
-      ...((fw.length || lo.length || cos) && !info?.userspace ? [{ reboot: true }] : []),
+      ...((fw.length || lo.length) && !info?.userspace ? [{ reboot: true }] : []),
       ...fw.map(n => ({ p: `${n}_a`, n })),
-      ...lo.flatMap(n => { const file = cos && n === 'my_region' ? `${cosFolder}/my_region.img` : undefined; return [{ logical: n, file }, { p: `${n}_a`, n, file }]; }),
-      ...(cos ? [{ p: 'oplusstanvbk_a', n: 'oplusstanvbk', file: `${cosFolder}/oplusstanvbk.img` }] : []),
-      ...(names.length || cos ? [{ active: 'a' }] : []),
+      ...lo.flatMap(n => [{ logical: n }, { p: `${n}_a`, n }]),
+      ...(names.length ? [{ active: 'a' }] : []),
     ];
   });
   const q = $derived(norm(bkQ));
@@ -167,16 +165,12 @@
   async function run() {
     confirmOpen = false; ack = false;
     const ok = await guard('Flaşlanıyor', async () => {
-      if (cosOn) {
-        const have = (await invoke('scan_images', { path: cosFolder })).map(i => i.name);
-        for (const n of ['oplusstanvbk', 'my_region']) if (!have.includes(n)) throw `${cosFolder}: ${n}.img yok`;
-      }
       for (const s of steps) {
         if (s.reboot) { log(t('Fastbootd’a geçiliyor…')); await invoke('fb_command', { cmd: 'reboot-fastboot' }); await reconnect(); log(t('Telefonda dil seçimi çıkarsa English seç')); continue; }
-        if (s.logical) { current = s.logical; progress = 0; log(`logical ${s.logical}`); log(await invoke('fb_logical', { name: s.logical, path: s.file ?? `${folder}/${s.logical}.img` })); continue; }
+        if (s.logical) { current = s.logical; progress = 0; log(`logical ${s.logical}`); log(await invoke('fb_logical', { name: s.logical, path: `${folder}/${s.logical}.img` })); continue; }
         if (s.active) { current = ''; log(`set_active ${s.active}`); log(await invoke('fb_command', { cmd: `set_active:${s.active}` })); continue; }
         current = s.p; progress = 0; log(`flash ${s.p}`);
-        log(await invoke('flash_image', { partition: s.p, path: s.file ?? `${folder}/${s.n}.img` }));
+        log(await invoke('flash_image', { partition: s.p, path: `${folder}/${s.n}.img` }));
       }
       current = ''; log(t('Flaşlama tamamlandı.')); return true;
     }, 'flash');
@@ -348,12 +342,6 @@
       <div class="frow"><div class="field"><input id="f" bind:value={folder} /><label for="f">{t('ROM klasörü (.img dosyaları)')}</label></div>
         <button class="btn tonal" aria-label="Klasör seç" onclick={async () => folder = await pick('dir', folder)}><FolderOpen size={22} /></button></div>
       <p class="sub">{t('OnePlus 13 (Stock ROM / AOSP): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.')}</p>
-      {#if true}
-        <div class="row" class:on={cosOn} role="button" tabindex="0" onclick={() => cosOn = !cosOn} onkeydown={(e) => e.key === 'Enter' && (cosOn = !cosOn)}>
-          <span class="grow"><b>{t('COS sinyal dosyaları')}</b><small>{t('oplusstanvbk ve my_region COS klasöründen yazılır (root yapmayacaksan)')}</small></span><span class="sw"></span></div>
-        {#if cosOn}<div class="frow"><div class="field"><input id="cf" bind:value={cosFolder} /><label for="cf">{t('COS klasörü (oplusstanvbk.img, my_region.img)')}</label></div>
-          <button class="btn tonal" aria-label="Klasör seç" onclick={async () => cosFolder = await pick('dir', cosFolder)}><FolderOpen size={22} /></button></div>{/if}
-      {/if}
       <button class="btn tonal" onclick={scan} disabled={!!busy}>{t('İmajları tara')}</button>
     </section>
     {#if busy === 'Flaşlanıyor' && owner === 'flash'}

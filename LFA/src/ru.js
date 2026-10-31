@@ -36,7 +36,6 @@ export const RU = {
   'Stock ROM (OnePlus 13 · OOS): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.':'Stock ROM (OnePlus 13 · OOS): в bootloader — A/B, в fastbootd — только A, затем set_active a.',
   'AOSP (OnePlus 13): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.':'AOSP (OnePlus 13): в bootloader — A/B, в fastbootd — только A, затем set_active a.',
   'Genel: A/B cihazlarda tüm imajlar iki slota yazılır.':'Общий: на A/B-устройствах все образы пишутся в оба слота.',
-  'COS sinyal dosyaları':'Файлы сигнала COS','oplusstanvbk ve my_region COS klasöründen yazılır (root yapmayacaksan)':'oplusstanvbk и my_region записываются из папки COS (если не будете делать root)','COS klasörü (oplusstanvbk.img, my_region.img)':'Папка COS (oplusstanvbk.img, my_region.img)',
   'OnePlus 13 (Stock ROM / AOSP): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.':'OnePlus 13 (Stock ROM / AOSP): в bootloader — A/B, в fastbootd — только A, затем set_active a.',
   'Bağlanılıyor':'Подключение','Root denetleniyor':'Проверка root','Komut çalışıyor':'Выполнение команды','Yeniden başlatılıyor':'Перезагрузка','Taranıyor':'Сканирование','Flaşlanıyor':'Прошивка','Veriler siliniyor':'Стирание данных',
   'Payload okunuyor':'Чтение payload','Çıkarılıyor':'Извлечение','Uygulamalar okunuyor':'Чтение приложений','Yedekler okunuyor':'Чтение бэкапов','Yedekleniyor':'Резервное копирование','Geri yükleniyor':'Восстановление',
