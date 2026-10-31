@@ -5,7 +5,6 @@
   import { makeT } from './i18n.js';
   import { Smartphone, Zap, Package, DatabaseBackup, Settings, Usb, RefreshCw, FolderOpen, ShieldAlert, Power, KeyRound } from 'lucide-svelte';
 
-  const CHAIN = new Set(['boot','init_boot','vendor_boot','dtbo','vbmeta','vbmeta_system','vbmeta_vendor','recovery','abl','xbl','xbl_config','tz','hyp','modem','dsp']);
   const SKIP = new Set(['userdata','metadata']);
   const tabs = [['device','Cihaz',Smartphone],['flash','Flaşla',Zap],['payload','Payload',Package],['backup','Yedek',DatabaseBackup],['settings','Ayarlar',Settings]];
   const titles = { device:'Cihaz', flash:'Flaşla', payload:'Payload', backup:'Yedekle', settings:'Ayarlar' };
@@ -76,32 +75,23 @@
   const fmt = (b) => b > 1e9 ? (b/1e9).toFixed(2)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : (b/1e3).toFixed(0)+' KB';
   const slotted = $derived(info?.slotCount === '2');
   const names = $derived(images.filter(i => picked[i.name]).map(i => i.name));
-  // Profiller: bootloader'da A/B, fastbootd'de yalnızca A; mantıksal bölümler silinip yeniden oluşturulur (bkz. Regional_Flasher.bat / AOSPFLASHER.bat)
-  let prof = $state('generic'), cosOn = $state(false), cosFolder = $state('');
+  // Tek akış (Stock ROM + AOSP birleşik; klasörde olmayan imajlar zaten listelenmez/atlanır):
+  // bootloader'da A/B, fastbootd'de yalnızca A, mantıksal bölümler silinip yeniden oluşturulur, sonda set_active a.
+  let cosOn = $state(false), cosFolder = $state('');
   const BL = ['boot', 'dtbo', 'init_boot', 'modem', 'recovery', 'vbmeta', 'vbmeta_system', 'vbmeta_vendor', 'vendor_boot'];
-  const LOGICAL = {
-    stock: ['my_bigball', 'my_carrier', 'my_engineering', 'my_heytap', 'my_manifest', 'my_product', 'my_region', 'my_stock', 'odm', 'product', 'system', 'system_dlkm', 'system_ext', 'vendor', 'vendor_dlkm', 'my_company', 'my_preload'],
-    aosp: ['odm', 'product', 'system', 'system_dlkm', 'system_ext', 'vendor', 'vendor_dlkm'],
-  };
-  function setProf(v) { prof = v; store.set('lf.prof', v); }
-  const place = (n) => prof === 'generic' ? (CHAIN.has(n) ? 'boot zinciri' : '') : BL.includes(n) ? 'bootloader · A/B' : LOGICAL[prof].includes(n) ? 'fastbootd · mantıksal (A)' : 'fastbootd · A';
+  const LOGICAL = ['my_bigball', 'my_carrier', 'my_engineering', 'my_heytap', 'my_manifest', 'my_product', 'my_region', 'my_stock', 'odm', 'product', 'system', 'system_dlkm', 'system_ext', 'vendor', 'vendor_dlkm', 'my_company', 'my_preload'];
+  const place = (n) => BL.includes(n) ? 'bootloader · A/B' : LOGICAL.includes(n) ? 'fastbootd · mantıksal (A)' : 'fastbootd · A';
   const steps = $derived.by(() => {
-    if (prof !== 'generic') {
-      const lg = LOGICAL[prof];
-      const cos = prof === 'stock' && cosOn && cosFolder;
-      const bl = names.filter(n => BL.includes(n)), lo = lg.filter(n => names.includes(n) || (cos && n === 'my_region')), fw = names.filter(n => !BL.includes(n) && !lg.includes(n));
-      return [
-        ...bl.flatMap(n => [{ p: `${n}_a`, n }, { p: `${n}_b`, n }]),
-        ...((fw.length || lo.length || cos) && !info?.userspace ? [{ reboot: true }] : []),
-        ...fw.map(n => ({ p: `${n}_a`, n })),
-        ...lo.flatMap(n => { const file = cos && n === 'my_region' ? `${cosFolder}/my_region.img` : undefined; return [{ logical: n, file }, { p: `${n}_a`, n, file }]; }),
-        ...(cos ? [{ p: 'oplusstanvbk_a', n: 'oplusstanvbk', file: `${cosFolder}/oplusstanvbk.img` }] : []),
-        ...(names.length || cos ? [{ active: 'a' }] : []),
-      ];
-    }
-    const t = (n) => (slotted ? [`${n}_a`, `${n}_b`] : [n]).map(p => ({ p, n }));
-    const c = names.filter(n => CHAIN.has(n)), r = names.filter(n => !CHAIN.has(n));
-    return [...c.flatMap(t), ...(r.length && !info?.userspace ? [{ reboot: true }] : []), ...r.flatMap(t)];
+    const cos = cosOn && cosFolder;
+    const bl = names.filter(n => BL.includes(n)), lo = LOGICAL.filter(n => names.includes(n) || (cos && n === 'my_region')), fw = names.filter(n => !BL.includes(n) && !LOGICAL.includes(n));
+    return [
+      ...bl.flatMap(n => [{ p: `${n}_a`, n }, { p: `${n}_b`, n }]),
+      ...((fw.length || lo.length || cos) && !info?.userspace ? [{ reboot: true }] : []),
+      ...fw.map(n => ({ p: `${n}_a`, n })),
+      ...lo.flatMap(n => { const file = cos && n === 'my_region' ? `${cosFolder}/my_region.img` : undefined; return [{ logical: n, file }, { p: `${n}_a`, n, file }]; }),
+      ...(cos ? [{ p: 'oplusstanvbk_a', n: 'oplusstanvbk', file: `${cosFolder}/oplusstanvbk.img` }] : []),
+      ...(names.length || cos ? [{ active: 'a' }] : []),
+    ];
   });
   const q = $derived(norm(bkQ));
   const bkView = $derived(bkApps.filter(p => matchApp(p, q)));
@@ -114,8 +104,10 @@
   async function guard(label, fn, who = 'device') {
     busy = label; owner = who;
     const long = who !== 'device';
-    if (long) { keep(true); if (!bgOk) log(`⚠ ${t('Arka planda çalışma izni yok: uygulama arka plana alınırsa işlem durabilir.')}`); }
-    try { return await fn(); } catch (e) { fail(e); } finally { busy = ''; owner = ''; if (long) keep(false); }
+    // Ön plan servisi yalnızca 1,5 sn'den uzun işlerde başlatılır: çok kısa işlerde start+stop yarışı uygulamayı çökertiyordu.
+    let started = false, kt = null;
+    if (long) { kt = setTimeout(() => { started = true; keep(true); }, 1500); if (!bgOk) log(`⚠ ${t('Arka planda çalışma izni yok: uygulama arka plana alınırsa işlem durabilir.')}`); }
+    try { return await fn(); } catch (e) { fail(e); } finally { busy = ''; owner = ''; if (long) { clearTimeout(kt); if (started) keep(false); } }
   }
   const pick = async (kind, cur) => { try { return await invoke(kind === 'dir' ? 'pick_folder' : 'pick_file'); } catch (e) { fail(e); return cur; } };
 
@@ -175,12 +167,12 @@
   async function run() {
     confirmOpen = false; ack = false;
     const ok = await guard('Flaşlanıyor', async () => {
-      if (prof === 'stock' && cosOn) {
+      if (cosOn) {
         const have = (await invoke('scan_images', { path: cosFolder })).map(i => i.name);
         for (const n of ['oplusstanvbk', 'my_region']) if (!have.includes(n)) throw `${cosFolder}: ${n}.img yok`;
       }
       for (const s of steps) {
-        if (s.reboot) { log(t('Fastbootd’a geçiliyor…')); await invoke('fb_command', { cmd: 'reboot-fastboot' }); await reconnect(); if (prof !== 'generic') log(t('Telefonda dil seçimi çıkarsa English seç')); continue; }
+        if (s.reboot) { log(t('Fastbootd’a geçiliyor…')); await invoke('fb_command', { cmd: 'reboot-fastboot' }); await reconnect(); log(t('Telefonda dil seçimi çıkarsa English seç')); continue; }
         if (s.logical) { current = s.logical; progress = 0; log(`logical ${s.logical}`); log(await invoke('fb_logical', { name: s.logical, path: s.file ?? `${folder}/${s.logical}.img` })); continue; }
         if (s.active) { current = ''; log(`set_active ${s.active}`); log(await invoke('fb_command', { cmd: `set_active:${s.active}` })); continue; }
         current = s.p; progress = 0; log(`flash ${s.p}`);
@@ -218,7 +210,7 @@
   onMount(() => {
     lang = store.get('lf.lang', 'system'); checkStorage();
     checkBg().then(() => { if (!bgOk && !store.get('lf.bgAsked', '')) { store.set('lf.bgAsked', '1'); askBg(); } });
-    prof = ['generic', 'stock', 'aosp'].includes(store.get('lf.prof', 'generic')) ? store.get('lf.prof', 'generic') : 'generic'; theme = store.get('lf.theme', 'system'); autoConnect = store.get('lf.auto', '1') === '1'; applyTheme();
+    theme = store.get('lf.theme', 'system'); autoConnect = store.get('lf.auto', '1') === '1'; applyTheme();
     poll();
     const iv = setInterval(poll, 2000);
     const vis = () => { if (!document.hidden) { poll(); checkStorage(); checkBg(); } };
@@ -355,10 +347,8 @@
     <section class="card">
       <div class="frow"><div class="field"><input id="f" bind:value={folder} /><label for="f">{t('ROM klasörü (.img dosyaları)')}</label></div>
         <button class="btn tonal" aria-label="Klasör seç" onclick={async () => folder = await pick('dir', folder)}><FolderOpen size={22} /></button></div>
-      <div class="group">{#each [['generic', 'Genel'], ['stock', 'Stock ROM'], ['aosp', 'AOSP']] as [v, l]}
-        <button class="btn" class:sel={prof === v} onclick={() => setProf(v)} disabled={!!busy}>{t(l)}</button>{/each}</div>
-      <p class="sub">{prof === 'stock' ? t('Stock ROM (OnePlus 13 · OOS): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.') : prof === 'aosp' ? t('AOSP (OnePlus 13): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.') : t('Genel: A/B cihazlarda tüm imajlar iki slota yazılır.')}</p>
-      {#if prof === 'stock'}
+      <p class="sub">{t('OnePlus 13 (Stock ROM / AOSP): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.')}</p>
+      {#if true}
         <div class="row" class:on={cosOn} role="button" tabindex="0" onclick={() => cosOn = !cosOn} onkeydown={(e) => e.key === 'Enter' && (cosOn = !cosOn)}>
           <span class="grow"><b>{t('COS sinyal dosyaları')}</b><small>{t('oplusstanvbk ve my_region COS klasöründen yazılır (root yapmayacaksan)')}</small></span><span class="sw"></span></div>
         {#if cosOn}<div class="frow"><div class="field"><input id="cf" bind:value={cosFolder} /><label for="cf">{t('COS klasörü (oplusstanvbk.img, my_region.img)')}</label></div>
@@ -480,7 +470,7 @@
       <ShieldAlert size={32} color="var(--err)" />
       <h2>{t('{n} bölüm flaşlanacak', { n: steps.filter(s => s.p || s.logical).length })}</h2>
       <p class="sub">{t('Yanlış imaj cihazı bozabilir. Kabloyu çıkarma, uygulamayı kapatma ve ekranı açık tut.')}</p>
-      {#if prof !== 'generic'}<p class="sub">{t('Mantıksal bölümler silinip yeniden oluşturulur; B slotundaki kopyaları boş kalır. İşlem sonunda aktif slot A yapılır.')}</p>{/if}
+      <p class="sub">{t('Mantıksal bölümler silinip yeniden oluşturulur; B slotundaki kopyaları boş kalır. İşlem sonunda aktif slot A yapılır.')}</p>
       <div class="row" class:on={ack} role="button" tabindex="0" onclick={() => ack = !ack} onkeydown={() => {}}>
         <span class="grow">{t('Yedeğim var, riski anlıyorum')}</span><span class="sw"></span></div>
       <div class="acts"><button class="btn text" onclick={() => confirmOpen = false}>{t('Vazgeç')}</button>

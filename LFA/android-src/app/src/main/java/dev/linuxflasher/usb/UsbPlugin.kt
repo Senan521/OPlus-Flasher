@@ -97,7 +97,7 @@ class UsbPlugin(private val activity: Activity) : Plugin(activity) {
     @Command fun keepAlive(invoke: Invoke) {
         val a = invoke.parseArgs(KeepArgs::class.java)
         val i = Intent(activity, KeepAliveService::class.java)
-        if (a.on) { if (Build.VERSION.SDK_INT >= 26) activity.startForegroundService(i) else activity.startService(i) } else activity.stopService(i)
+        try { if (a.on) { if (Build.VERSION.SDK_INT >= 26) activity.startForegroundService(i) else activity.startService(i) } else activity.stopService(i) } catch (e: Exception) { }
         invoke.resolve(JSObject())
     }
     @Command fun nativeDir(invoke: Invoke) { invoke.resolve(JSObject().put("path", activity.applicationInfo.nativeLibraryDir)) }

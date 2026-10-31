@@ -37,6 +37,7 @@ export const EN = {
   'AOSP (OnePlus 13): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.':'AOSP (OnePlus 13): A/B in bootloader, only A in fastbootd, then set_active a.',
   'Genel: A/B cihazlarda tüm imajlar iki slota yazılır.':'General: on A/B devices every image is written to both slots.',
   'COS sinyal dosyaları':'COS signal files','oplusstanvbk ve my_region COS klasöründen yazılır (root yapmayacaksan)':'oplusstanvbk and my_region are written from the COS folder (if you will not root)','COS klasörü (oplusstanvbk.img, my_region.img)':'COS folder (oplusstanvbk.img, my_region.img)',
+  'OnePlus 13 (Stock ROM / AOSP): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.':'OnePlus 13 (Stock ROM / AOSP): A/B in bootloader, only A in fastbootd, then set_active a.',
   // busy labels
   'Bağlanılıyor':'Connecting','Root denetleniyor':'Checking root','Komut çalışıyor':'Running command','Yeniden başlatılıyor':'Rebooting','Taranıyor':'Scanning','Flaşlanıyor':'Flashing','Veriler siliniyor':'Wiping data',
   'Payload okunuyor':'Reading payload','Çıkarılıyor':'Extracting','Uygulamalar okunuyor':'Reading apps','Yedekler okunuyor':'Reading backups','Yedekleniyor':'Backing up','Geri yükleniyor':'Restoring',

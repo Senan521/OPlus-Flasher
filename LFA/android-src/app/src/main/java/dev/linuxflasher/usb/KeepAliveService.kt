@@ -14,18 +14,23 @@ import android.os.PowerManager
 class KeepAliveService : Service() {
     private var wl: PowerManager.WakeLock? = null
     override fun onBind(i: Intent?): IBinder? = null
+    // startForegroundService() sonrası startForeground() hemen çağrılmazsa sistem uygulamayı sonlandırır; bu yüzden onCreate'te de çağrılır.
+    override fun onCreate() { super.onCreate(); goForeground() }
     override fun onStartCommand(i: Intent?, flags: Int, id: Int): Int {
+        goForeground()
+        if (wl == null) {
+            wl = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "oplus:keep")
+            wl?.acquire(3 * 60 * 60 * 1000L)
+        }
+        return START_NOT_STICKY
+    }
+    private fun goForeground() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(NotificationChannel("keep", "OPlus Flasher", NotificationManager.IMPORTANCE_LOW))
         val b = if (Build.VERSION.SDK_INT >= 26) Notification.Builder(this, "keep") else Notification.Builder(this)
         val n = b.setContentTitle("OPlus Flasher").setContentText("İşlem sürüyor · Operation in progress")
             .setSmallIcon(android.R.drawable.stat_sys_download).setOngoing(true).build()
         if (Build.VERSION.SDK_INT >= 29) startForeground(77, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else startForeground(77, n)
-        if (wl == null) {
-            wl = (getSystemService(POWER_SERVICE) as PowerManager).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "oplus:keep")
-            wl?.acquire(3 * 60 * 60 * 1000L)
-        }
-        return START_NOT_STICKY
     }
     override fun onDestroy() { wl?.let { if (it.isHeld) it.release() }; super.onDestroy() }
 }
