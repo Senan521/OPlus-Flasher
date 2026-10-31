@@ -39,10 +39,17 @@ fn assets_of(rel: &Value) -> Vec<Asset> {
     })).collect()).unwrap_or_default()
 }
 fn kmi_of_asset(n: &str) -> Option<String> { let k = n.strip_suffix("_kernelsu.ko")?; ok_kmi(k).then(|| k.to_string()) }
+fn is_apk(a: &Asset) -> bool { let n = a.name.to_lowercase(); n.ends_with(".apk") && !n.contains("debug") }
+fn is_spoof(a: &Asset) -> bool { a.name.to_lowercase().contains("spoof") }
+/// Normal manager: an APK without "spoof" in its name (falls back to the first APK). Spoofed manager: only an APK that says so.
 fn pick_manager(assets: &[Asset], spoofed: bool) -> Option<&Asset> {
-    let apks: Vec<&Asset> = assets.iter().filter(|a| { let n = a.name.to_lowercase(); n.ends_with(".apk") && !n.contains("debug") }).collect();
-    apks.iter().find(|a| a.name.to_lowercase().contains("spoof") == spoofed).copied().or_else(|| apks.first().copied())
+    let apks: Vec<&Asset> = assets.iter().filter(|a| is_apk(a)).collect();
+    let hit = apks.iter().find(|a| is_spoof(a) == spoofed).copied();
+    if spoofed { hit } else { hit.or_else(|| apks.first().copied()) }
 }
+
+/// KMI list used when a release does not ship `<kmi>_kernelsu.ko` files (KernelSU 3.3+ embeds the LKMs inside ksud).
+const KMIS: [&str; 7] = ["android12-5.10", "android13-5.10", "android13-5.15", "android14-5.15", "android14-6.1", "android15-6.6", "android16-6.12"];
 
 fn http_get(url: &str) -> Result<Vec<u8>, String> {
     let r = ureq::get(url).set("User-Agent", "oplus-flasher").set("Accept", "application/vnd.github+json")
@@ -93,7 +100,12 @@ pub async fn ksu_releases(repo: String) -> Result<Vec<Value>, String> {
             let assets = assets_of(rel);
             let mut kmis: Vec<String> = assets.iter().filter_map(|a| kmi_of_asset(&a.name)).collect();
             kmis.sort(); kmis.dedup();
-            out.push(json!({"tag": rel["tag_name"], "name": rel["name"], "prerelease": rel["prerelease"], "kmis": kmis, "apk": pick_manager(&assets, false).is_some()}));
+            let embedded = kmis.is_empty();
+            if embedded { kmis = KMIS.iter().map(|k| k.to_string()).collect(); }
+            let normal = pick_manager(&assets, false).map(|a| a.name.clone());
+            let spoof = pick_manager(&assets, true).map(|a| a.name.clone());
+            out.push(json!({"tag": rel["tag_name"], "name": rel["name"], "prerelease": rel["prerelease"], "kmis": kmis, "embedded": embedded,
+                "ksud": pick_ksud(&assets).is_some(), "apk": normal.is_some(), "apkName": normal, "spoofName": spoof}));
         }
         Ok(out)
     }).await.map_err(e)?
@@ -132,7 +144,13 @@ pub fn detect_kmi(uname: Option<String>, folder: &str) -> Value {
 const KDIR: &str = "/data/local/tmp/oplus-ksu";
 
 fn pick_ksud(assets: &[Asset]) -> Option<&Asset> {
-    assets.iter().find(|a| { let n = a.name.to_lowercase(); n.contains("ksud") && n.contains("aarch64") && !n.ends_with(".sha256") && !n.ends_with(".sig") && !n.ends_with(".txt") })
+    let ok = |a: &&Asset| {
+        let n = a.name.to_lowercase();
+        n.contains("ksud") && (n.contains("aarch64") || n.contains("arm64"))
+            && !["windows", "darwin", "apple", "macos", ".exe", ".sha256", ".sig", ".txt", ".zip", ".gz", ".tar", ".xz", ".apk", ".ko"].iter().any(|b| n.contains(b))
+    };
+    assets.iter().filter(ok).find(|a| a.name.to_lowercase().contains("android")).or_else(|| assets.iter().filter(ok).find(|a| a.name.to_lowercase().contains("linux")))
+        .or_else(|| assets.iter().find(ok))
 }
 
 fn push(a: &mut Adb, local: &Path, remote: &str) -> Result<(), String> {
@@ -204,7 +222,7 @@ pub async fn ksu_patch(app: AppHandle, repo: String, tag: String, folder: String
         let rel = github_json(&format!("https://api.github.com/repos/{repo}/releases/tags/{tag}"))?;
         let assets = assets_of(&rel);
         let dir = cache_dir(&app, &repo, &tag)?;
-        let ksud_asset = pick_ksud(&assets).ok_or_else(|| format!("Bu sürümde aarch64 ksud dosyası yok. Dosyalar: {}", assets.iter().map(|a| a.name.as_str()).take(12).collect::<Vec<_>>().join(", ")))?;
+        let ksud_asset = pick_ksud(&assets).ok_or_else(|| format!("Bu sürümde aarch64 ksud dosyası yok. Dosyalar: {}", assets.iter().map(|a| a.name.as_str()).take(40).collect::<Vec<_>>().join(", ")))?;
         let ksud = ensure_asset(&app, &repo, &dir, ksud_asset)?;
         let ko_name = format!("{kmi}_kernelsu.ko");
         let ko = match assets.iter().find(|a| a.name == ko_name) {

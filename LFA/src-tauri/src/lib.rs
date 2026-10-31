@@ -230,6 +230,31 @@ async fn pick_folder(app: AppHandle) -> Result<String, String> { blocking(move |
 #[tauri::command]
 async fn pick_file(app: AppHandle) -> Result<String, String> { blocking(move || app.state::<U>().pick("pickFile")).await }
 
+/// fastbootd only: recreates a logical partition the way the OPlus flasher scripts do. Both slots (and their -cow
+/// snapshots) are deleted, `_a`/`_b` are created, and `_a` is resized to the image so a normal flash can follow.
+#[tauri::command]
+async fn fb_logical(app: AppHandle, name: String, path: String) -> Result<String, String> {
+    if name.is_empty() || name.starts_with("super") || !name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_') {
+        return Err("geçersiz bölüm adı".into());
+    }
+    if !path.ends_with(".img") { return Err("geçersiz imaj yolu".into()); }
+    blocking(move || {
+        let st = app.state::<State>();
+        let g = st.0.lock().unwrap();
+        let s = g.as_ref().ok_or("cihaz bağlı değil")?;
+        if s.fb.getvar("serialno") != s.serial { return Err("seri numarası değişti, işlem iptal edildi".to_string()); }
+        if s.fb.getvar("is-userspace") != "yes" { return Err("mantıksal bölümler için fastbootd gerekli".to_string()); }
+        let size = std::fs::metadata(&path).map_err(|e| format!("{path}: {e}"))?.len();
+        for sfx in ["a", "b"] {
+            let _ = s.fb.cmd(&format!("delete-logical-partition:{name}_{sfx}"));
+            let _ = s.fb.cmd(&format!("delete-logical-partition:{name}_{sfx}-cow"));
+        }
+        for sfx in ["a", "b"] { s.fb.cmd(&format!("create-logical-partition:{name}_{sfx}:1"))?; }
+        s.fb.cmd(&format!("resize-logical-partition:{name}_a:{size}"))?;
+        Ok(format!("{name}_a hazır ({size} bayt), {name}_b boş"))
+    }).await
+}
+
 #[tauri::command]
 async fn fb_wipe(app: AppHandle) -> Result<String, String> {
     blocking(move || {
@@ -248,7 +273,7 @@ pub fn run() {
         .plugin(usb::init())
         .manage(State::default())
         .manage(AdbS::default())
-        .invoke_handler(tauri::generate_handler![usb_list, usb_connect, usb_disconnect, fb_command, scan_images, flash_image, payload_list, payload_extract, payload_cancel, adb_connect, adb_disconnect, adb_exec, adb_root_check, adb_reboot, bk_packages, bk_backup, bk_restore, bk_list, bk_cancel, pick_folder, pick_file, fb_wipe, storage_granted, storage_request, bg_granted, bg_request, keep_alive, ksu_detect_kmi, ksu_install_manager, ksu_flash, ksu::ksu_releases, ksu::ksu_scan, ksu::ksu_patch])
+        .invoke_handler(tauri::generate_handler![usb_list, usb_connect, usb_disconnect, fb_command, scan_images, flash_image, payload_list, payload_extract, payload_cancel, adb_connect, adb_disconnect, adb_exec, adb_root_check, adb_reboot, bk_packages, bk_backup, bk_restore, bk_list, bk_cancel, pick_folder, pick_file, fb_wipe, fb_logical, storage_granted, storage_request, bg_granted, bg_request, keep_alive, ksu_detect_kmi, ksu_install_manager, ksu_flash, ksu::ksu_releases, ksu::ksu_scan, ksu::ksu_patch])
         .run(tauri::generate_context!())
         .expect("error while running Linux Flasher");
 }

@@ -7,6 +7,14 @@ G=src-tauri/gen/android/app/src/main
 mkdir -p "$G/java/dev/linuxflasher/usb" "$G/res/xml"
 cp android-src/app/src/main/java/dev/linuxflasher/usb/*.kt "$G/java/dev/linuxflasher/usb/"
 cp android-src/app/src/main/res/xml/device_filter.xml "$G/res/xml/"
+# `tauri android init` varsayılan Tauri ikonlarını üretir; kendi ikonlarımız üzerine yazılır.
+if [ -d src-tauri/icons/android ]; then
+  find "$G/res" -name 'ic_launcher*.webp' -delete 2>/dev/null || true
+  cp -r src-tauri/icons/android/. "$G/res/"
+  echo "Uygulama ikonu kopyalandı: src-tauri/icons/android -> $G/res"
+else
+  echo "UYARI: src-tauri/icons/android yok, varsayılan ikon kalır"
+fi
 python3 - "$G/AndroidManifest.xml" <<'PY'
 import sys
 p = sys.argv[1]; s = open(p, encoding='utf-8').read()

@@ -37,12 +37,14 @@
     const vb = ksuVb && ksuScan?.images?.find(i => i.name === 'vbmeta.img')?.path;
     log(await invoke('ksu_flash', { partition: ksuPart, file: ksuOut.path, vbmeta: vb || null, reboot: ksuReboot })); if (ksuReboot) { info = null; connName = ''; }
   }, 'flash');
-  const ksuApk = () => guard('Yönetici kuruluyor', async () => { log(await invoke('ksu_install_manager', { repo: ksuRepo, tag: ksuTag, spoofed: false })); }, 'flash');
+  const ksuApk = (spoofed) => guard('Yönetici kuruluyor', async () => { log(await invoke('ksu_install_manager', { repo: ksuRepo, tag: ksuTag, spoofed })); }, 'flash');
+  const ksuRoots = ['tiann/KernelSU', 'KernelSU-Next/KernelSU-Next', 'SukiSU-Ultra/SukiSU-Ultra', 'ReSukiSU/ReSukiSU'];
+  const curRel = $derived(ksuRels.find(r => r.tag === ksuTag));
   let logs = $state([]), busy = $state(''), owner = $state('');
   let confirmOpen = $state(false), ack = $state(false), doneOpen = $state(false), wipeAck = $state(false);
 
   let lang = $state('system');
-  const eff = $derived(lang === 'system' ? ((navigator.language || 'en').toLowerCase().startsWith('tr') ? 'tr' : 'en') : lang);
+  const eff = $derived(lang === 'system' ? ((() => { const l = (navigator.language || 'en').toLowerCase(); return l.startsWith('tr') ? 'tr' : l.startsWith('ru') ? 'ru' : 'en'; })()) : lang);
   const { t, tr } = makeT(() => eff);
   let storageOk = $state(true);
   const checkStorage = async () => { try { storageOk = await invoke('storage_granted'); } catch {} };
@@ -74,7 +76,29 @@
   const fmt = (b) => b > 1e9 ? (b/1e9).toFixed(2)+' GB' : b > 1e6 ? (b/1e6).toFixed(1)+' MB' : (b/1e3).toFixed(0)+' KB';
   const slotted = $derived(info?.slotCount === '2');
   const names = $derived(images.filter(i => picked[i.name]).map(i => i.name));
+  // Profiller: bootloader'da A/B, fastbootd'de yalnızca A; mantıksal bölümler silinip yeniden oluşturulur (bkz. Regional_Flasher.bat / AOSPFLASHER.bat)
+  let prof = $state('generic'), cosOn = $state(false), cosFolder = $state('');
+  const BL = ['boot', 'dtbo', 'init_boot', 'modem', 'recovery', 'vbmeta', 'vbmeta_system', 'vbmeta_vendor', 'vendor_boot'];
+  const LOGICAL = {
+    stock: ['my_bigball', 'my_carrier', 'my_engineering', 'my_heytap', 'my_manifest', 'my_product', 'my_region', 'my_stock', 'odm', 'product', 'system', 'system_dlkm', 'system_ext', 'vendor', 'vendor_dlkm', 'my_company', 'my_preload'],
+    aosp: ['odm', 'product', 'system', 'system_dlkm', 'system_ext', 'vendor', 'vendor_dlkm'],
+  };
+  function setProf(v) { prof = v; store.set('lf.prof', v); }
+  const place = (n) => prof === 'generic' ? (CHAIN.has(n) ? 'boot zinciri' : '') : BL.includes(n) ? 'bootloader · A/B' : LOGICAL[prof].includes(n) ? 'fastbootd · mantıksal (A)' : 'fastbootd · A';
   const steps = $derived.by(() => {
+    if (prof !== 'generic') {
+      const lg = LOGICAL[prof];
+      const cos = prof === 'stock' && cosOn && cosFolder;
+      const bl = names.filter(n => BL.includes(n)), lo = lg.filter(n => names.includes(n) || (cos && n === 'my_region')), fw = names.filter(n => !BL.includes(n) && !lg.includes(n));
+      return [
+        ...bl.flatMap(n => [{ p: `${n}_a`, n }, { p: `${n}_b`, n }]),
+        ...((fw.length || lo.length || cos) && !info?.userspace ? [{ reboot: true }] : []),
+        ...fw.map(n => ({ p: `${n}_a`, n })),
+        ...lo.flatMap(n => { const file = cos && n === 'my_region' ? `${cosFolder}/my_region.img` : undefined; return [{ logical: n, file }, { p: `${n}_a`, n, file }]; }),
+        ...(cos ? [{ p: 'oplusstanvbk_a', n: 'oplusstanvbk', file: `${cosFolder}/oplusstanvbk.img` }] : []),
+        ...(names.length || cos ? [{ active: 'a' }] : []),
+      ];
+    }
     const t = (n) => (slotted ? [`${n}_a`, `${n}_b`] : [n]).map(p => ({ p, n }));
     const c = names.filter(n => CHAIN.has(n)), r = names.filter(n => !CHAIN.has(n));
     return [...c.flatMap(t), ...(r.length && !info?.userspace ? [{ reboot: true }] : []), ...r.flatMap(t)];
@@ -151,10 +175,16 @@
   async function run() {
     confirmOpen = false; ack = false;
     const ok = await guard('Flaşlanıyor', async () => {
+      if (prof === 'stock' && cosOn) {
+        const have = (await invoke('scan_images', { path: cosFolder })).map(i => i.name);
+        for (const n of ['oplusstanvbk', 'my_region']) if (!have.includes(n)) throw `${cosFolder}: ${n}.img yok`;
+      }
       for (const s of steps) {
-        if (s.reboot) { log(t('Fastbootd’a geçiliyor…')); await invoke('fb_command', { cmd: 'reboot-fastboot' }); await reconnect(); continue; }
+        if (s.reboot) { log(t('Fastbootd’a geçiliyor…')); await invoke('fb_command', { cmd: 'reboot-fastboot' }); await reconnect(); if (prof !== 'generic') log(t('Telefonda dil seçimi çıkarsa English seç')); continue; }
+        if (s.logical) { current = s.logical; progress = 0; log(`logical ${s.logical}`); log(await invoke('fb_logical', { name: s.logical, path: s.file ?? `${folder}/${s.logical}.img` })); continue; }
+        if (s.active) { current = ''; log(`set_active ${s.active}`); log(await invoke('fb_command', { cmd: `set_active:${s.active}` })); continue; }
         current = s.p; progress = 0; log(`flash ${s.p}`);
-        log(await invoke('flash_image', { partition: s.p, path: `${folder}/${s.n}.img` }));
+        log(await invoke('flash_image', { partition: s.p, path: s.file ?? `${folder}/${s.n}.img` }));
       }
       current = ''; log(t('Flaşlama tamamlandı.')); return true;
     }, 'flash');
@@ -188,7 +218,7 @@
   onMount(() => {
     lang = store.get('lf.lang', 'system'); checkStorage();
     checkBg().then(() => { if (!bgOk && !store.get('lf.bgAsked', '')) { store.set('lf.bgAsked', '1'); askBg(); } });
-    theme = store.get('lf.theme', 'system'); autoConnect = store.get('lf.auto', '1') === '1'; applyTheme();
+    prof = ['generic', 'stock', 'aosp'].includes(store.get('lf.prof', 'generic')) ? store.get('lf.prof', 'generic') : 'generic'; theme = store.get('lf.theme', 'system'); autoConnect = store.get('lf.auto', '1') === '1'; applyTheme();
     poll();
     const iv = setInterval(poll, 2000);
     const vis = () => { if (!document.hidden) { poll(); checkStorage(); checkBg(); } };
@@ -283,11 +313,12 @@
           <span class="chip {adbInfo ? 'ok' : 'warn'}">{adbInfo ? t('ADB bağlı') : t('ADB gerekli')}</span></div>
         <p class="sub">{t('Yama hedef cihazda yapılır: hedef cihaz ADB ile bağlı olmalı (ksud cihaza gönderilip orada çalıştırılır).')}</p>
         <div class="field"><input id="kr" bind:value={ksuRepo} /><label for="kr">{t('GitHub deposu')}</label></div>
+        <div class="chips">{#each ksuRoots as r}<button class="chip" onclick={() => ksuRepo = r}>{r.split('/')[1]}</button>{/each}</div>
         <button class="btn tonal" onclick={ksuRel} disabled={!!busy}>{t('Sürümleri getir')}</button>
       </section>
       {#each ksuRels as r}
         <div class="row" class:on={ksuTag === r.tag} role="button" tabindex="0" onclick={() => ksuTag = r.tag} onkeydown={(e) => e.key === 'Enter' && (ksuTag = r.tag)}>
-          <span class="grow"><b>{r.tag}</b><small>{t('{n} KMI', { n: r.kmis.length })}{r.prerelease ? ' · ' + t('ön sürüm') : ''}</small></span><span class="sw"></span></div>
+          <span class="grow"><b>{r.tag}</b><small>{r.embedded ? t('KMI’ler ksud içinde') : t('{n} KMI', { n: r.kmis.length })}{r.prerelease ? ' · ' + t('ön sürüm') : ''}</small></span><span class="sw"></span></div>
       {/each}
       <section class="card">
         <div class="field"><input id="km" bind:value={ksuKmi} /><label for="km">{t('KMI (örn. android14-6.1)')}</label></div>
@@ -306,13 +337,33 @@
           {#if busy === 'KSU flaşlanıyor'}<div class="bar"><i style="width:{progress * 100}%"></i></div>{/if}
           <button class="btn" onclick={ksuFlash} disabled={!info || !!busy}>{t('Flaşla')}</button>
           {#if !info}<p class="sub">{t('Flaşlamak için cihaz fastboot modunda bağlı olmalı.')}</p>{/if}
-          <button class="btn tonal" onclick={ksuApk} disabled={!adbInfo || !!busy}>{t('Yöneticiyi kur (ADB)')}</button>
+        </section>
+      {/if}
+      {#if curRel}
+        <section class="card">
+          <h2>{t('Yönetici APK’sı')}</h2>
+          <p class="sub">{t('Seçili sürümün yönetici uygulamasını hedef cihaza ADB ile kur.')}</p>
+          <div class="group">
+            <button class="btn tonal" onclick={() => ksuApk(false)} disabled={!adbInfo || !!busy || !curRel.apk}>{t('Normal sürüm')}</button>
+            <button class="btn tonal" onclick={() => ksuApk(true)} disabled={!adbInfo || !!busy || !curRel.spoofName}>{t('Spoofed sürüm')}</button>
+          </div>
+          <p class="sub">{curRel.apkName ?? t('APK bulunamadı')}{curRel.spoofName ? ' · ' + curRel.spoofName : ' · ' + t('spoofed APK yok')}</p>
+          {#if !adbInfo}<p class="sub">{t('Kurmak için hedef cihaz ADB ile bağlı olmalı.')}</p>{/if}
         </section>
       {/if}
     {:else}
     <section class="card">
       <div class="frow"><div class="field"><input id="f" bind:value={folder} /><label for="f">{t('ROM klasörü (.img dosyaları)')}</label></div>
         <button class="btn tonal" aria-label="Klasör seç" onclick={async () => folder = await pick('dir', folder)}><FolderOpen size={22} /></button></div>
+      <div class="group">{#each [['generic', 'Genel'], ['stock', 'Stock ROM'], ['aosp', 'AOSP']] as [v, l]}
+        <button class="btn" class:sel={prof === v} onclick={() => setProf(v)} disabled={!!busy}>{t(l)}</button>{/each}</div>
+      <p class="sub">{prof === 'stock' ? t('Stock ROM (OnePlus 13 · OOS): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.') : prof === 'aosp' ? t('AOSP (OnePlus 13): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.') : t('Genel: A/B cihazlarda tüm imajlar iki slota yazılır.')}</p>
+      {#if prof === 'stock'}
+        <div class="row" class:on={cosOn} role="button" tabindex="0" onclick={() => cosOn = !cosOn} onkeydown={(e) => e.key === 'Enter' && (cosOn = !cosOn)}>
+          <span class="grow"><b>{t('COS sinyal dosyaları')}</b><small>{t('oplusstanvbk ve my_region COS klasöründen yazılır (root yapmayacaksan)')}</small></span><span class="sw"></span></div>
+        {#if cosOn}<div class="frow"><div class="field"><input id="cf" bind:value={cosFolder} /><label for="cf">{t('COS klasörü (oplusstanvbk.img, my_region.img)')}</label></div>
+          <button class="btn tonal" aria-label="Klasör seç" onclick={async () => cosFolder = await pick('dir', cosFolder)}><FolderOpen size={22} /></button></div>{/if}
+      {/if}
       <button class="btn tonal" onclick={scan} disabled={!!busy}>{t('İmajları tara')}</button>
     </section>
     {#if busy === 'Flaşlanıyor' && owner === 'flash'}
@@ -326,7 +377,7 @@
     {#each images as im}
       <div class="row" class:on={picked[im.name]} role="button" tabindex="0"
            onclick={() => picked[im.name] = !picked[im.name]} onkeydown={(e) => e.key === 'Enter' && (picked[im.name] = !picked[im.name])}>
-        <span class="grow"><b>{im.name}</b><small>{fmt(im.size)}{CHAIN.has(im.name) ? ' · ' + t('boot zinciri') : ''}</small></span><span class="sw"></span>
+        <span class="grow"><b>{im.name}</b><small>{fmt(im.size)}{place(im.name) ? ' · ' + t(place(im.name)) : ''}</small></span><span class="sw"></span>
       </div>
     {/each}
     {#if images.length}<div style="height:80px"></div>{/if}
@@ -397,7 +448,7 @@
     </div>
     {#if sub === 'general'}
       <section class="card"><h2>{t('Dil')}</h2>
-        <div class="group">{#each [['system','Sistem'],['tr','Türkçe'],['en','English']] as [v, l]}
+        <div class="group">{#each [['system','Sistem'],['tr','Türkçe'],['en','English'],['ru','Русский']] as [v, l]}
           <button class="btn" class:sel={lang === v} onclick={() => setLang(v)}>{t(l)}</button>{/each}</div>
       </section>
       <section class="card"><h2>{t('Görünüm')}</h2>
@@ -427,8 +478,9 @@
   <div class="scrim" role="presentation" onclick={() => confirmOpen = false}>
     <div class="dialog" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
       <ShieldAlert size={32} color="var(--err)" />
-      <h2>{t('{n} bölüm flaşlanacak', { n: steps.filter(s => !s.reboot).length })}</h2>
+      <h2>{t('{n} bölüm flaşlanacak', { n: steps.filter(s => s.p || s.logical).length })}</h2>
       <p class="sub">{t('Yanlış imaj cihazı bozabilir. Kabloyu çıkarma, uygulamayı kapatma ve ekranı açık tut.')}</p>
+      {#if prof !== 'generic'}<p class="sub">{t('Mantıksal bölümler silinip yeniden oluşturulur; B slotundaki kopyaları boş kalır. İşlem sonunda aktif slot A yapılır.')}</p>{/if}
       <div class="row" class:on={ack} role="button" tabindex="0" onclick={() => ack = !ack} onkeydown={() => {}}>
         <span class="grow">{t('Yedeğim var, riski anlıyorum')}</span><span class="sw"></span></div>
       <div class="acts"><button class="btn text" onclick={() => confirmOpen = false}>{t('Vazgeç')}</button>

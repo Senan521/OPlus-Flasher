@@ -29,6 +29,14 @@ export const EN = {
   'Arka planda çalışma izni yok: uygulama arka plana alınırsa işlem durabilir.':'No background permission: the job may stop if the app goes to the background.','OTA zip dosyası veya Payload.bin dosyasını seçin':'Select an OTA zip file or a payload.bin file',
   'ADB Shell Root iznini verdiğinizden emin olun':'Make sure you have granted ADB Shell root access','ADB bağlı':'ADB connected','ADB gerekli':'ADB required',
   'Yama hedef cihazda yapılır: hedef cihaz ADB ile bağlı olmalı (ksud cihaza gönderilip orada çalıştırılır).':'Patching runs on the target device: it must be connected via ADB (ksud is sent to the device and executed there).',
+  'KMI’ler ksud içinde':'KMIs are built into ksud','Yönetici APK’sı':'Manager APK','Seçili sürümün yönetici uygulamasını hedef cihaza ADB ile kur.':'Install the selected release’s manager app on the target device via ADB.',
+  'Normal sürüm':'Normal build','Spoofed sürüm':'Spoofed build','APK bulunamadı':'APK not found','spoofed APK yok':'no spoofed APK','Kurmak için hedef cihaz ADB ile bağlı olmalı.':'The target device must be connected via ADB to install.',
+  'Telefonda dil seçimi çıkarsa English seç':'If a language prompt appears on the phone, choose English','Genel':'General','Stock ROM':'Stock ROM','AOSP':'AOSP','bootloader · A/B':'bootloader · A/B','fastbootd · A':'fastbootd · A only','fastbootd · mantıksal (A)':'fastbootd · logical (A)',
+  'Mantıksal bölümler silinip yeniden oluşturulur; B slotundaki kopyaları boş kalır. İşlem sonunda aktif slot A yapılır.':'Logical partitions are deleted and recreated; their B-slot copies stay empty. The active slot is set to A at the end.',
+  'Stock ROM (OnePlus 13 · OOS): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.':'Stock ROM (OnePlus 13 · OOS): A/B in bootloader, only A in fastbootd, then set_active a.',
+  'AOSP (OnePlus 13): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.':'AOSP (OnePlus 13): A/B in bootloader, only A in fastbootd, then set_active a.',
+  'Genel: A/B cihazlarda tüm imajlar iki slota yazılır.':'General: on A/B devices every image is written to both slots.',
+  'COS sinyal dosyaları':'COS signal files','oplusstanvbk ve my_region COS klasöründen yazılır (root yapmayacaksan)':'oplusstanvbk and my_region are written from the COS folder (if you will not root)','COS klasörü (oplusstanvbk.img, my_region.img)':'COS folder (oplusstanvbk.img, my_region.img)',
   // busy labels
   'Bağlanılıyor':'Connecting','Root denetleniyor':'Checking root','Komut çalışıyor':'Running command','Yeniden başlatılıyor':'Rebooting','Taranıyor':'Scanning','Flaşlanıyor':'Flashing','Veriler siliniyor':'Wiping data',
   'Payload okunuyor':'Reading payload','Çıkarılıyor':'Extracting','Uygulamalar okunuyor':'Reading apps','Yedekler okunuyor':'Reading backups','Yedekleniyor':'Backing up','Geri yükleniyor':'Restoring',
@@ -50,15 +58,19 @@ export const ERR = {
   'geçerli bir payload.bin değil':'not a valid payload.bin','zip içinde payload.bin yok':'no payload.bin inside the zip','desteklenmeyen işlem türü':'unsupported operation type','artımlı OTA desteklenmez, tam OTA kullan':'incremental OTAs are not supported, use a full OTA',
   'geçersiz bölüm adı':'invalid partition name','imaj max-download-size sınırını aşıyor':'image exceeds max-download-size','Uygun USB arayüzü yok':'No suitable USB interface','Bu konumdan dosya yolu alınamadı; Dahili depolamadan seç':'Could not get a file path from this location; pick from internal storage',
 };
+import { RU, ERR_RU } from './ru.js';
 export function makeT(getLang) {
   const t = (s, p) => {
-    let r = getLang() === 'en' ? (EN[s] ?? s) : s;
+    const l = getLang();
+    let r = l === 'en' ? (EN[s] ?? s) : l === 'ru' ? (RU[s] ?? EN[s] ?? s) : s;
     if (p) for (const k in p) r = r.split(`{${k}}`).join(p[k]);
     return r;
   };
   const tr = (m) => {
     let r = String(m);
-    if (getLang() === 'en') for (const k in ERR) r = r.split(k).join(ERR[k]);
+    const l = getLang();
+    if (l === 'en') for (const k in ERR) r = r.split(k).join(ERR[k]);
+    else if (l === 'ru') for (const k in ERR) r = r.split(k).join(ERR_RU[k] ?? ERR[k]);
     return r;
   };
   return { t, tr };
