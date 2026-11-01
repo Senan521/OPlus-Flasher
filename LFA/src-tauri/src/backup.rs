@@ -10,6 +10,56 @@ const KINDS: [(&str, &str); 3] = [("data", "/data/user/0"), ("de", "/data/user_d
 
 #[derive(Serialize, Deserialize)]
 struct Manifest { pkg: String, time: u64, apks: Vec<String>, kinds: Vec<String> }
+/// Uygulama klasöründe durmayan, sistemin tuttuğu ayarlar: çalışma zamanı izinleri, AppOps ve SSAID (perms.json).
+#[derive(Serialize, Deserialize, Default)]
+struct Perms { #[serde(default)] runtime: Vec<String>, #[serde(default)] appops: Vec<(String, String)>, #[serde(default)] ssaid: Option<String> }
+const SSAID_FILE: &str = "/data/system/users/0/settings_ssaid.xml";
+fn valid_perm(p: &str) -> bool { !p.is_empty() && p.len() < 200 && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.') }
+fn valid_op(p: &str) -> bool { !p.is_empty() && p.len() < 80 && p.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') }
+
+/// `dumpsys package` çıktısındaki ilk "runtime permissions:" bloğundan (kullanıcı 0) verilmiş izinleri alır.
+fn parse_runtime(dump: &str) -> Vec<String> {
+    let mut out = vec![];
+    let mut base: Option<usize> = None;
+    for l in dump.lines() {
+        let t = l.trim();
+        let ind = l.len() - l.trim_start().len();
+        match base {
+            None => { if t == "runtime permissions:" { base = Some(ind); } }
+            Some(b) => {
+                if t.is_empty() { continue; }
+                if ind <= b { break; }
+                if let Some((name, rest)) = t.split_once(':') {
+                    if rest.contains("granted=true") && valid_perm(name) { out.push(name.to_string()); }
+                }
+            }
+        }
+    }
+    out
+}
+/// `appops get <pkg>` çıktısı: "OP: mod; time=..." satırları ("default" ve uid modları hariç).
+fn parse_appops(o: &str) -> Vec<(String, String)> {
+    o.lines().filter_map(|l| {
+        let t = l.trim();
+        if t.starts_with("Uid mode") { return None; }
+        let (op, rest) = t.split_once(':')?;
+        let mode = rest.trim().split(|c: char| c == ';' || c.is_whitespace()).next()?;
+        if valid_op(op) && ["allow", "ignore", "deny", "foreground"].contains(&mode) { Some((op.to_string(), mode.to_string())) } else { None }
+    }).collect()
+}
+fn attr(tag: &str, name: &str) -> Option<String> {
+    let key = format!(" {name}=\"");
+    let i = tag.find(&key)? + key.len();
+    Some(tag[i..].split('"').next()?.to_string())
+}
+fn ssaid_find(xml: &str, pkg: &str) -> Option<String> {
+    xml.split('<').filter(|t| t.starts_with("setting ")).find(|t| attr(t, "package").as_deref() == Some(pkg))
+        .and_then(|t| attr(t, "value")).filter(|v| !v.is_empty() && v.len() <= 64 && v.chars().all(|c| c.is_ascii_hexdigit()))
+}
+fn ssaid_read(a: &mut Adb, cx: &Cx) -> Result<String, String> {
+    a.exec(&cx.c(&format!("abx2xml {SSAID_FILE} - 2>/dev/null || cat {SSAID_FILE}")))
+}
+
 #[derive(Serialize)]
 pub struct Item { pub pkg: String, pub time: u64, pub mb: u64 }
 
@@ -127,6 +177,13 @@ fn backup_pkg(app: &AppHandle, a: &mut Adb, cx: &Cx, pkg: &str, idx: usize, n: u
         verify_tar(&f, pkg)?;
         kinds.push(k.to_string());
     }
+    bk_log(app, format!("{pkg}: izinler, AppOps ve SSAID okunuyor"));
+    let mut perms = Perms::default();
+    if let Ok(d) = a.exec(&format!("dumpsys package {pkg}")) { perms.runtime = parse_runtime(&d); }
+    if let Ok(o) = a.exec(&format!("appops get {pkg}")) { perms.appops = parse_appops(&o); }
+    if let Ok(x) = ssaid_read(a, cx) { perms.ssaid = ssaid_find(&x, pkg); }
+    bk_log(app, format!("{pkg}: {} izin, {} AppOps{}", perms.runtime.len(), perms.appops.len(), if perms.ssaid.is_some() { ", SSAID" } else { "" }));
+    fs::write(dir.join("perms.json"), serde_json::to_vec_pretty(&perms).map_err(e)?).map_err(e)?;
     let time = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     fs::write(dir.join("manifest.json"), serde_json::to_vec_pretty(&Manifest { pkg: pkg.into(), time, apks, kinds }).map_err(e)?).map_err(e)
 }
@@ -175,7 +232,7 @@ impl Read for CountRead<'_, '_> {
 }
 fn bk_log(app: &AppHandle, m: String) { let _ = app.emit("bk-log", m); }
 
-fn restore_pkg(app: &AppHandle, a: &mut Adb, cx: &Cx, pkg: &str, dir: &Path, idx: usize, n: usize) -> Result<(), String> {
+fn restore_pkg(app: &AppHandle, a: &mut Adb, cx: &Cx, pkg: &str, dir: &Path, idx: usize, n: usize, ssaid: bool) -> Result<(), String> {
     let m: Manifest = serde_json::from_slice(&fs::read(dir.join("manifest.json")).map_err(e)?).map_err(e)?;
     if m.pkg != pkg { return Err("manifest paketle uyuşmuyor".into()); }
     let sizes: Vec<u64> = m.apks.iter().map(|x| if valid_apk_name(x) { fs::metadata(dir.join(x)).map(|y| y.len()).map_err(e) } else { Err(format!("geçersiz APK adı: {x}")) }).collect::<Result<_, _>>()?;
@@ -227,22 +284,89 @@ fn restore_pkg(app: &AppHandle, a: &mut Adb, cx: &Cx, pkg: &str, dir: &Path, idx
         }
         a.exec(&cx.c(&format!("restorecon -RF {base}/{pkg}")))?;
     }
+    if let Some(p) = fs::read(dir.join("perms.json")).ok().and_then(|b| serde_json::from_slice::<Perms>(&b).ok()) { apply_perms(app, a, cx, pkg, &p, ssaid); }
     Ok(())
 }
 
-pub fn restore(app: &AppHandle, a: &mut Adb, pkgs: &[String], out: &str) -> Result<(), String> {
+/// Hatalar ölümcül değildir: günlüğe uyarı olarak yazılır (bazı izinler/işlemler cihazda değiştirilemez).
+fn apply_perms(app: &AppHandle, a: &mut Adb, cx: &Cx, pkg: &str, p: &Perms, ssaid: bool) {
+    let rt: Vec<&String> = p.runtime.iter().filter(|x| valid_perm(x)).collect();
+    if !rt.is_empty() {
+        bk_log(app, format!("{pkg}: {} çalışma zamanı izni veriliyor", rt.len()));
+        for ch in rt.chunks(12) {
+            let _ = a.exec(&ch.iter().map(|x| format!("pm grant {pkg} {x}")).collect::<Vec<_>>().join("; "));
+        }
+    }
+    let ops: Vec<&(String, String)> = p.appops.iter().filter(|(o, m)| valid_op(o) && ["allow", "ignore", "deny", "foreground"].contains(&m.as_str())).collect();
+    if !ops.is_empty() {
+        bk_log(app, format!("{pkg}: {} AppOps ayarlanıyor", ops.len()));
+        for ch in ops.chunks(12) {
+            let _ = a.exec(&ch.iter().map(|(o, m)| format!("appops set {pkg} {o} {m}")).collect::<Vec<_>>().join("; "));
+        }
+    }
+    if ssaid {
+        if let Some(v) = &p.ssaid {
+            match restore_ssaid(a, cx, pkg, v) {
+                Ok(()) => bk_log(app, format!("{pkg}: SSAID yazıldı, geçerli olması için cihazı yeniden başlat")),
+                Err(x) => bk_log(app, format!("⚠ {pkg}: SSAID geri yüklenemedi: {x}")),
+            }
+        } else { bk_log(app, format!("{pkg}: yedekte SSAID yok")); }
+    }
+}
+
+/// settings_ssaid.xml içindeki kaydı değiştirir (yoksa ekler). Dosya ABX ise abx2xml/xml2abx ile dönüştürülür; yerinde (`cat >`)
+/// yazıldığı için sahiplik ve SELinux etiketi korunur. Sistem hafızadaki değeri yeniden başlatmaya kadar kullanır.
+fn restore_ssaid(a: &mut Adb, cx: &Cx, pkg: &str, val: &str) -> Result<(), String> {
+    if !val.chars().all(|c| c.is_ascii_hexdigit()) { return Err("geçersiz SSAID".into()); }
+    let abx = a.exec(&cx.c(&format!("abx2xml {SSAID_FILE} - >/dev/null 2>&1 && echo abx")))?.contains("abx");
+    let xml = ssaid_read(a, cx)?;
+    if !xml.contains("<settings") { return Err("settings_ssaid.xml okunamadı".into()); }
+    let mut tags: Vec<String> = xml.split('<').map(|s| s.to_string()).collect();
+    let mut done = false;
+    for t in tags.iter_mut() {
+        if t.starts_with("setting ") && attr(t, "package").as_deref() == Some(pkg) {
+            let old = attr(t, "value").ok_or("value yok")?;
+            *t = t.replacen(&format!(" value=\"{old}\""), &format!(" value=\"{val}\""), 1);
+            done = true;
+        }
+    }
+    let mut out = tags.join("<");
+    if !done {
+        let uid = a.exec(&cx.c(&format!("stat -c %u /data/user/0/{pkg}")))?.trim().to_string();
+        if uid.is_empty() || !uid.chars().all(|c| c.is_ascii_digit()) { return Err("uid okunamadı".into()); }
+        let id = xml.split('<').filter(|t| t.starts_with("setting ")).filter_map(|t| attr(t, "id")?.parse::<u64>().ok()).max().unwrap_or(0) + 1;
+        let line = format!("<setting id=\"{id}\" name=\"{uid}\" value=\"{val}\" package=\"{pkg}\" defaultValue=\"{val}\" defaultSysSet=\"true\" tag=\"null\" />\n");
+        out = out.replacen("</settings>", &format!("{line}</settings>"), 1);
+    }
+    let tmp = "/data/local/tmp/lf_ssaid.xml";
+    let bin = "/data/local/tmp/lf_ssaid.out";
+    let bak = "/data/local/tmp/settings_ssaid.lf.bak";
+    let mut rd = std::io::Cursor::new(out.into_bytes());
+    let len = rd.get_ref().len();
+    feed(a, &format!("exec:head -c {len} > {tmp}"), &mut rd)?;
+    a.exec(&cx.c(&format!("cp {SSAID_FILE} {bak}")))?;
+    let conv = if abx { format!("xml2abx {tmp} {bin}") } else { format!("cp {tmp} {bin}") };
+    let r = a.exec(&cx.c(&format!("{conv} 2>&1; test -s {bin} && echo OK")))?;
+    if !r.trim_end().ends_with("OK") { let _ = a.exec(&format!("rm -f {tmp} {bin}")); return Err(format!("dönüştürme başarısız: {}", r.trim())); }
+    let r = a.exec(&cx.c(&format!("cat {bin} > {SSAID_FILE} && echo OK")))?;
+    let _ = a.exec(&format!("rm -f {tmp} {bin}"));
+    if !r.trim_end().ends_with("OK") { return Err(format!("yazılamadı (yedek: {bak}): {}", r.trim())); }
+    Ok(())
+}
+
+pub fn restore(app: &AppHandle, a: &mut Adb, pkgs: &[String], out: &str, ssaid: bool) -> Result<(), String> {
     CANCEL.store(false, Ordering::SeqCst);
-    let r = restore_all(app, a, pkgs, out);
+    let r = restore_all(app, a, pkgs, out, ssaid);
     CANCEL.store(false, Ordering::SeqCst);
     r
 }
-fn restore_all(app: &AppHandle, a: &mut Adb, pkgs: &[String], out: &str) -> Result<(), String> {
+fn restore_all(app: &AppHandle, a: &mut Adb, pkgs: &[String], out: &str, ssaid: bool) -> Result<(), String> {
     let cx = Cx::new(a)?;
     for (i, p) in pkgs.iter().enumerate() {
         if !valid_pkg(p) { return Err(format!("geçersiz paket adı: {p}")); }
         if CANCEL.load(Ordering::SeqCst) { return Err("iptal edildi".into()); }
         let _ = app.emit("bk-progress", (p.as_str(), i as f64, pkgs.len() as f64));
-        restore_pkg(app, a, &cx, p, &Path::new(out).join(p), i, pkgs.len()).map_err(|x| format!("{p}: {x}"))?;
+        restore_pkg(app, a, &cx, p, &Path::new(out).join(p), i, pkgs.len(), ssaid).map_err(|x| format!("{p}: {x}"))?;
     }
     let _ = app.emit("bk-progress", ("", pkgs.len() as f64, pkgs.len() as f64));
     Ok(())

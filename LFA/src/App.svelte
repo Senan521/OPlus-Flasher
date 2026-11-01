@@ -197,8 +197,9 @@
   const bkRun = () => guard('Yedekleniyor', async () => {
     await invoke('bk_backup', { pkgs: bkApps.filter(p => bkPick[p]), out: bkDir }); log(t('Yedekleme bitti')); bkItems = await invoke('bk_list', { out: bkDir });
   }, 'backup');
+  let ssaidOn = $state(store.get('lf.ssaid', '0') === '1');
   const bkRestore = () => guard('Geri yükleniyor', async () => {
-    await invoke('bk_restore', { pkgs: bkItems.filter(i => rPick[i.pkg]).map(i => i.pkg), out: bkDir }); log(t('Geri yükleme bitti'));
+    await invoke('bk_restore', { pkgs: bkItems.filter(i => rPick[i.pkg]).map(i => i.pkg), out: bkDir, ssaid: ssaidOn }); log(t('Geri yükleme bitti'));
   }, 'backup');
 
   onMount(() => {
@@ -417,7 +418,10 @@
       <div class="row" class:on={rPick[it.pkg]} role="button" tabindex="0" onclick={() => rPick[it.pkg] = !rPick[it.pkg]} onkeydown={(e) => e.key === 'Enter' && (rPick[it.pkg] = !rPick[it.pkg])}>
         <span class="grow"><b>{appLabel(it.pkg)}</b><small>{it.pkg} · {it.mb} MB · {new Date(it.time * 1000).toLocaleDateString()}</small></span><span class="sw"></span></div>
     {/each}
-    {#if bkItems.length}<button class="btn tonal wide" onclick={bkRestore} disabled={!adbInfo || !!busy || !countOn(bkItems, rPick, i => i.pkg)}>{t('Seçilenleri geri yükle')}</button>{/if}
+    {#if bkItems.length}
+      <div class="row" class:on={ssaidOn} role="button" tabindex="0" onclick={() => { ssaidOn = !ssaidOn; store.set('lf.ssaid', ssaidOn ? '1' : '0'); }} onkeydown={(e) => e.key === 'Enter' && (ssaidOn = !ssaidOn, store.set('lf.ssaid', ssaidOn ? '1' : '0'))}>
+        <span class="grow"><b>{t('SSAID’i de geri yükle')}</b><small>{t('Sistem dosyasını değiştirir (riskli); sonra cihazı yeniden başlat')}</small></span><span class="sw"></span></div>
+      <button class="btn tonal wide" onclick={bkRestore} disabled={!adbInfo || !!busy || !countOn(bkItems, rPick, i => i.pkg)}>{t('Seçilenleri geri yükle')}</button>{/if}
 
   {:else}
     <div class="group">

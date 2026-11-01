@@ -159,8 +159,8 @@ async fn bk_backup(app: AppHandle, pkgs: Vec<String>, out: String) -> Result<(),
     blocking(move || { let ap = app.clone(); with_adb(&app, |a| backup::backup(&ap, a, &pkgs, &out)) }).await
 }
 #[tauri::command]
-async fn bk_restore(app: AppHandle, pkgs: Vec<String>, out: String) -> Result<(), String> {
-    blocking(move || { let ap = app.clone(); with_adb(&app, |a| backup::restore(&ap, a, &pkgs, &out)) }).await
+async fn bk_restore(app: AppHandle, pkgs: Vec<String>, out: String, ssaid: bool) -> Result<(), String> {
+    blocking(move || { let ap = app.clone(); with_adb(&app, |a| backup::restore(&ap, a, &pkgs, &out, ssaid)) }).await
 }
 #[tauri::command]
 fn bk_list(out: String) -> Result<Vec<backup::Item>, String> { backup::list(&out) }
