@@ -36,8 +36,11 @@ export const EN = {
   'Stock ROM (OnePlus 13 · OOS): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.':'Stock ROM (OnePlus 13 · OOS): A/B in bootloader, only A in fastbootd, then set_active a.',
   'AOSP (OnePlus 13): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.':'AOSP (OnePlus 13): A/B in bootloader, only A in fastbootd, then set_active a.',
   'Genel: A/B cihazlarda tüm imajlar iki slota yazılır.':'General: on A/B devices every image is written to both slots.',
-  'OnePlus 13 (Stock ROM / AOSP): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.':'OnePlus 13 (Stock ROM / AOSP): A/B in bootloader, only A in fastbootd, then set_active a.',
   'SSAID’i de geri yükle':'Also restore SSAID','Sistem dosyasını değiştirir (riskli); sonra cihazı yeniden başlat':'Modifies a system file (risky); reboot the device afterwards',
+  'ADB Sideload':'ADB Sideload','ROM veya başka bir zip dosyasını Recovery üzerinden yükle':'Install a ROM or any other zip through Recovery','Sideload modunda':'In sideload mode','Sideload modunda değil ({s})':'Not in sideload mode ({s})','Denetlenmedi':'Not checked',
+  'Hedef cihazda Recovery → Apply update → Apply from ADB seç, sonra aşağıdan denetle.':'On the target device choose Recovery → Apply update → Apply from ADB, then check below.','Sideload modunu denetle':'Check sideload mode','Recovery’ye yeniden başlat':'Reboot to Recovery',
+  'Zip dosyası yolu':'Zip file path','Sideload ile yükle':'Install via sideload','Önce cihazın sideload modunda olduğunu denetle.':'First check that the device is in sideload mode.','ADB cihazı bulunamadı':'No ADB device found','ADB durumu: {s}':'ADB state: {s}',
+  'Sideload denetleniyor':'Checking sideload','Sideload gönderiliyor':'Sending via sideload','Sideload tamamlandı':'Sideload finished','Extra':'Extra',
   // busy labels
   'Bağlanılıyor':'Connecting','Root denetleniyor':'Checking root','Komut çalışıyor':'Running command','Yeniden başlatılıyor':'Rebooting','Taranıyor':'Scanning','Flaşlanıyor':'Flashing','Veriler siliniyor':'Wiping data',
   'Payload okunuyor':'Reading payload','Çıkarılıyor':'Extracting','Uygulamalar okunuyor':'Reading apps','Yedekler okunuyor':'Reading backups','Yedekleniyor':'Backing up','Geri yükleniyor':'Restoring',

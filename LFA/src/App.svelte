@@ -3,11 +3,11 @@
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { makeT } from './i18n.js';
-  import { Smartphone, Zap, Package, DatabaseBackup, Settings, Usb, RefreshCw, FolderOpen, ShieldAlert, Power, KeyRound } from 'lucide-svelte';
+  import { Smartphone, Zap, Package, DatabaseBackup, Puzzle, FileUp, Settings, Usb, RefreshCw, FolderOpen, ShieldAlert, Power, KeyRound } from 'lucide-svelte';
 
   const SKIP = new Set(['userdata','metadata']);
-  const tabs = [['device','Cihaz',Smartphone],['flash','Flaşla',Zap],['payload','Payload',Package],['backup','Yedek',DatabaseBackup],['settings','Ayarlar',Settings]];
-  const titles = { device:'Cihaz', flash:'Flaşla', payload:'Payload', backup:'Yedekle', settings:'Ayarlar' };
+  const tabs = [['device','Cihaz',Smartphone],['flash','Flaşla',Zap],['payload','Payload',Package],['extra','Extra',Puzzle],['settings','Ayarlar',Settings]];
+  const titles = { device:'Cihaz', flash:'Flaşla', payload:'Payload', extra:'Extra', settings:'Ayarlar' };
 
   let tab = $state('device');
   let devices = $state([]), info = $state(null), adbInfo = $state(null), connName = $state('');
@@ -22,21 +22,31 @@
   function setTheme(v) { theme = v; store.set('lf.theme', v); applyTheme(); }
   const toggleAuto = () => { autoConnect = !autoConnect; store.set('lf.auto', autoConnect ? '1' : '0'); };
   const copyLog = async () => { try { await navigator.clipboard.writeText(logs.join('\n')); log(t('Günlük panoya kopyalandı')); } catch { log(`⚠ ${t('HATA')}: ${t('pano erişimi yok')}`); } };
-  let flashSub = $state('images'), ksuRepo = $state('tiann/KernelSU'), ksuStatus = $state(null), ksuRels = $state([]), ksuTag = $state(''), ksuKmi = $state(''), ksuPart = $state('init_boot');
+  let flashSub = $state('images'), extraSub = $state('backup'), sdFile = $state(''), sdState = $state(''), sdProg = $state(0), ksuRepo = $state('tiann/KernelSU'), ksuStatus = $state(null), ksuRels = $state([]), ksuTag = $state(''), ksuKmi = $state(''), ksuPart = $state('init_boot');
   let ksuScan = $state(null), ksuOut = $state(null), ksuVb = $state(true), ksuReboot = $state(true), ksuLast = $state('');
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const sdCheck = async () => {
+    if (!adbInfo) { rescan(); for (let i = 0; i < 60 && !adbInfo && (i < 8 || busy); i++) await sleep(500); }
+    if (!adbInfo) { sdState = ''; log(`⚠ ${t('ADB cihazı bulunamadı')}`); return; }
+    await guard('Sideload denetleniyor', async () => { sdState = await invoke('adb_state'); log(t('ADB durumu: {s}', { s: sdState })); }, 'device');
+  };
+  const sdRun = () => guard('Sideload gönderiliyor', async () => {
+    sdProg = 0; log(`adb sideload ${sdFile}`);
+    log(t(await invoke('adb_sideload', { path: sdFile }))); sdProg = 1;
+  }, 'flash');
   const ksuInit = () => guard('KernelSU hazırlanıyor', async () => {
     ksuStatus = { ksud: true }; ksuScan = await invoke('ksu_scan', { folder }).catch(() => null); if (ksuScan?.recommended) ksuPart = ksuScan.recommended;
-  }, 'flash');
-  const ksuRel = () => guard('Sürümler alınıyor', async () => { ksuRels = await invoke('ksu_releases', { repo: ksuRepo }); if (ksuRels[0]) ksuTag = ksuRels[0].tag; log(t('{n} sürüm bulundu', { n: ksuRels.length })); }, 'flash');
+  }, 'extra');
+  const ksuRel = () => guard('Sürümler alınıyor', async () => { ksuRels = await invoke('ksu_releases', { repo: ksuRepo }); if (ksuRels[0]) ksuTag = ksuRels[0].tag; log(t('{n} sürüm bulundu', { n: ksuRels.length })); }, 'extra');
   const ksuDetect = () => guard('KMI algılanıyor', async () => {
     const r = await invoke('ksu_detect_kmi', { folder }); if (r.kmi) { ksuKmi = r.kmi; log(t('KMI: {k} ({s})', { k: r.kmi, s: r.source })); } else log(t('KMI algılanamadı, elle seç'));
-  }, 'flash');
-  const ksuPatch = () => guard('Yamalanıyor', async () => { ksuOut = await invoke('ksu_patch', { repo: ksuRepo, tag: ksuTag, folder, partition: ksuPart, kmi: ksuKmi }); log(t('Yamalı imaj: {p}', { p: ksuOut.path })); }, 'flash');
+  }, 'extra');
+  const ksuPatch = () => guard('Yamalanıyor', async () => { ksuOut = await invoke('ksu_patch', { repo: ksuRepo, tag: ksuTag, folder, partition: ksuPart, kmi: ksuKmi }); log(t('Yamalı imaj: {p}', { p: ksuOut.path })); }, 'extra');
   const ksuFlash = () => guard('KSU flaşlanıyor', async () => {
     const vb = ksuVb && ksuScan?.images?.find(i => i.name === 'vbmeta.img')?.path;
     log(await invoke('ksu_flash', { partition: ksuPart, file: ksuOut.path, vbmeta: vb || null, reboot: ksuReboot })); if (ksuReboot) { info = null; connName = ''; }
-  }, 'flash');
-  const ksuApk = (spoofed) => guard('Yönetici kuruluyor', async () => { log(await invoke('ksu_install_manager', { repo: ksuRepo, tag: ksuTag, spoofed })); }, 'flash');
+  }, 'extra');
+  const ksuApk = (spoofed) => guard('Yönetici kuruluyor', async () => { log(await invoke('ksu_install_manager', { repo: ksuRepo, tag: ksuTag, spoofed })); }, 'extra');
   const ksuRoots = ['tiann/KernelSU', 'KernelSU-Next/KernelSU-Next', 'SukiSU-Ultra/SukiSU-Ultra', 'ReSukiSU/ReSukiSU'];
   const curRel = $derived(ksuRels.find(r => r.tag === ksuTag));
   let logs = $state([]), busy = $state(''), owner = $state('');
@@ -192,15 +202,15 @@
   }
 
   // ---- yedek ----
-  const bkLoad = () => guard('Uygulamalar okunuyor', async () => { bkApps = await invoke('bk_packages'); bkPick = {}; log(t('{n} kullanıcı uygulaması', { n: bkApps.length })); }, 'backup');
-  const bkScan = () => guard('Yedekler okunuyor', async () => { bkItems = await invoke('bk_list', { out: bkDir }); rPick = {}; log(t('{n} yedek bulundu', { n: bkItems.length })); }, 'backup');
+  const bkLoad = () => guard('Uygulamalar okunuyor', async () => { bkApps = await invoke('bk_packages'); bkPick = {}; log(t('{n} kullanıcı uygulaması', { n: bkApps.length })); }, 'extra');
+  const bkScan = () => guard('Yedekler okunuyor', async () => { bkItems = await invoke('bk_list', { out: bkDir }); rPick = {}; log(t('{n} yedek bulundu', { n: bkItems.length })); }, 'extra');
   const bkRun = () => guard('Yedekleniyor', async () => {
     await invoke('bk_backup', { pkgs: bkApps.filter(p => bkPick[p]), out: bkDir }); log(t('Yedekleme bitti')); bkItems = await invoke('bk_list', { out: bkDir });
-  }, 'backup');
+  }, 'extra');
   let ssaidOn = $state(store.get('lf.ssaid', '0') === '1');
   const bkRestore = () => guard('Geri yükleniyor', async () => {
     await invoke('bk_restore', { pkgs: bkItems.filter(i => rPick[i.pkg]).map(i => i.pkg), out: bkDir, ssaid: ssaidOn }); log(t('Geri yükleme bitti'));
-  }, 'backup');
+  }, 'extra');
 
   onMount(() => {
     lang = store.get('lf.lang', 'system'); checkStorage();
@@ -211,6 +221,7 @@
     const vis = () => { if (!document.hidden) { poll(); checkStorage(); checkBg(); } };
     document.addEventListener('visibilitychange', vis);
     const subs = [
+      listen('sideload-progress', (e) => { const [d, t] = e.payload; sdProg = t ? d / t : 0; }),
       listen('flash-progress', (e) => { const [, d, t] = e.payload; progress = t ? d / t : 0; }),
       listen('payload-progress', (e) => { const [n, d, t] = e.payload; pCur = n; pProg = t ? d / t : 0; }),
       listen('bk-progress', (e) => { const [n, d, t] = e.payload; bkCur = n; bkProg = t ? d / t : 0; }),
@@ -292,9 +303,79 @@
   {:else if tab === 'flash'}
     <div class="group">
       <button class="btn" class:sel={flashSub === 'images'} onclick={() => flashSub = 'images'}>{t('İmajlar')}</button>
-      <button class="btn" class:sel={flashSub === 'ksu'} onclick={() => { flashSub = 'ksu'; if (!ksuStatus) ksuInit(); }}>KernelSU</button>
+      <button class="btn" class:sel={flashSub === 'sideload'} onclick={() => flashSub = 'sideload'}>{t('ADB Sideload')}</button>
     </div>
-    {#if flashSub === 'ksu'}
+    {#if flashSub === 'sideload'}
+      <section class="card">
+        <div class="row" style="cursor:default"><FileUp size={26} /><span class="grow"><b>{t('ADB Sideload')}</b><small>{t('ROM veya başka bir zip dosyasını Recovery üzerinden yükle')}</small></span>
+          <span class="chip {sdState === 'sideload' ? 'ok' : 'warn'}">{sdState === 'sideload' ? t('Sideload modunda') : sdState ? t('Sideload modunda değil ({s})', { s: sdState }) : t('Denetlenmedi')}</span></div>
+        <p class="sub">{t('Hedef cihazda Recovery → Apply update → Apply from ADB seç, sonra aşağıdan denetle.')}</p>
+        <button class="btn tonal" onclick={sdCheck} disabled={!!busy}>{t('Sideload modunu denetle')}</button>
+        <button class="btn tonal" onclick={() => adbReboot('recovery')} disabled={!adbInfo || sdState === 'sideload' || !!busy}>{t('Recovery’ye yeniden başlat')}</button>
+      </section>
+      <section class="card">
+        <div class="frow"><div class="field"><input id="sf" bind:value={sdFile} /><label for="sf">{t('Zip dosyası yolu')}</label></div>
+          <button class="btn tonal" aria-label="Dosya seç" onclick={async () => sdFile = await pick('file', sdFile)}><FolderOpen size={22} /></button></div>
+        <button class="btn" onclick={sdRun} disabled={!sdFile || sdState !== 'sideload' || !!busy}>{t('Sideload ile yükle')}</button>
+        {#if sdState !== 'sideload'}<p class="sub">{t('Önce cihazın sideload modunda olduğunu denetle.')}</p>{/if}
+        {#if busy === 'Sideload gönderiliyor' && owner === 'flash'}
+          <div class="bar"><i style="width:{sdProg * 100}%"></i></div><p class="sub">%{Math.round(sdProg * 100)}</p>
+          <button class="btn text sm" onclick={() => { invoke('sideload_cancel'); log(t('Durduruluyor…')); }}>{t('Durdur')}</button>
+        {/if}
+      </section>
+    {:else}
+    <section class="card">
+      <div class="frow"><div class="field"><input id="f" bind:value={folder} /><label for="f">{t('ROM klasörü (.img dosyaları)')}</label></div>
+        <button class="btn tonal" aria-label="Klasör seç" onclick={async () => folder = await pick('dir', folder)}><FolderOpen size={22} /></button></div>
+      <button class="btn tonal" onclick={scan} disabled={!!busy}>{t('İmajları tara')}</button>
+    </section>
+    {#if busy === 'Flaşlanıyor' && owner === 'flash'}
+      <section class="card tonal"><h2>{current || t('Hazırlanıyor')}</h2>
+        <div class="bar"><i style="width:{progress * 100}%"></i></div><p class="sub">%{Math.round(progress * 100)}</p></section>
+    {/if}
+    {#if images.length}
+      <div class="selbar"><span>{t('{n} imaj · {m} seçili', { n: images.length, m: names.length })}</span>
+        <button class="btn text sm" onclick={() => toggleAll(images, picked, i => i.name)}>{allOn(images, picked, i => i.name) ? t('Seçimi kaldır') : t('Tümünü seç')}</button></div>
+    {/if}
+    {#each images as im}
+      <div class="row" class:on={picked[im.name]} role="button" tabindex="0"
+           onclick={() => picked[im.name] = !picked[im.name]} onkeydown={(e) => e.key === 'Enter' && (picked[im.name] = !picked[im.name])}>
+        <span class="grow"><b>{im.name}</b><small>{fmt(im.size)}{place(im.name) ? ' · ' + t(place(im.name)) : ''}</small></span><span class="sw"></span>
+      </div>
+    {/each}
+    {#if images.length}<div style="height:80px"></div>{/if}
+    <button class="fab" disabled={!info || !steps.length || !!busy} onclick={() => confirmOpen = true}><Zap size={22} /> {t('Flaşla ({n})', { n: names.length })}</button>
+
+    {/if}
+
+  {:else if tab === 'payload'}
+    <section class="card">
+      <div class="row" style="cursor:default"><Package size={26} /><span class="grow"><b>Payload Dumper</b><small>{t('OTA zip dosyası veya Payload.bin dosyasını seçin')}</small></span></div>
+      <div class="frow"><div class="field"><input id="pp" bind:value={pPath} /><label for="pp">{t('OTA zip / payload.bin yolu')}</label></div>
+        <button class="btn tonal" aria-label="Dosya seç" onclick={async () => pPath = await pick('file', pPath)}><FolderOpen size={22} /></button></div>
+      <p class="sub">{t('Çıktı klasörü: {f}', { f: folder })}</p>
+      <button class="btn tonal" onclick={pRead} disabled={!!busy}>{t('Bölümleri oku')}</button>
+      {#if busy === 'Çıkarılıyor' && owner === 'payload'}
+        <div class="bar"><i style="width:{pProg * 100}%"></i></div><p class="sub">{pCur} · %{Math.round(pProg * 100)}</p>
+        <button class="btn text sm" onclick={() => invoke('payload_cancel')}>{t('Durdur')}</button>
+      {/if}
+    </section>
+    {#if pParts.length}
+      <div class="selbar"><span>{t('{n} bölüm · {m} seçili', { n: pParts.length, m: countOn(pParts, pPick, p => p.name) })}</span>
+        <button class="btn text sm" onclick={() => toggleAll(pParts, pPick, p => p.name)}>{allOn(pParts, pPick, p => p.name) ? t('Seçimi kaldır') : t('Tümünü seç')}</button></div>
+    {/if}
+    {#each pParts as p}
+      <div class="row" class:on={pPick[p.name]} role="button" tabindex="0" onclick={() => pPick[p.name] = !pPick[p.name]} onkeydown={(e) => e.key === 'Enter' && (pPick[p.name] = !pPick[p.name])}>
+        <span class="grow"><b>{p.name}</b><small>{fmt(p.size)}</small></span><span class="sw"></span></div>
+    {/each}
+    {#if pParts.length}<button class="btn wide" onclick={pRun} disabled={!!busy}>{t('Seçilenleri çıkar')}</button>{/if}
+
+  {:else if tab === 'extra'}
+    <div class="group">
+      <button class="btn" class:sel={extraSub === 'backup'} onclick={() => extraSub = 'backup'}>{t('Yedek')}</button>
+      <button class="btn" class:sel={extraSub === 'ksu'} onclick={() => { extraSub = 'ksu'; if (!ksuStatus) ksuInit(); }}>KernelSU</button>
+    </div>
+    {#if extraSub === 'ksu'}
       <section class="card">
         <div class="row" style="cursor:default"><KeyRound size={26} /><span class="grow"><b>{t('KernelSU yama')}</b><small>{t('ksud boot-patch · yalnızca GKI cihazlar')}</small></span>
           <span class="chip {adbInfo ? 'ok' : 'warn'}">{adbInfo ? t('ADB bağlı') : t('ADB gerekli')}</span></div>
@@ -340,54 +421,6 @@
       {/if}
     {:else}
     <section class="card">
-      <div class="frow"><div class="field"><input id="f" bind:value={folder} /><label for="f">{t('ROM klasörü (.img dosyaları)')}</label></div>
-        <button class="btn tonal" aria-label="Klasör seç" onclick={async () => folder = await pick('dir', folder)}><FolderOpen size={22} /></button></div>
-      <p class="sub">{t('OnePlus 13 (Stock ROM / AOSP): bootloader’da A/B, fastbootd’de yalnızca A, sonra set_active a.')}</p>
-      <button class="btn tonal" onclick={scan} disabled={!!busy}>{t('İmajları tara')}</button>
-    </section>
-    {#if busy === 'Flaşlanıyor' && owner === 'flash'}
-      <section class="card tonal"><h2>{current || t('Hazırlanıyor')}</h2>
-        <div class="bar"><i style="width:{progress * 100}%"></i></div><p class="sub">%{Math.round(progress * 100)}</p></section>
-    {/if}
-    {#if images.length}
-      <div class="selbar"><span>{t('{n} imaj · {m} seçili', { n: images.length, m: names.length })}</span>
-        <button class="btn text sm" onclick={() => toggleAll(images, picked, i => i.name)}>{allOn(images, picked, i => i.name) ? t('Seçimi kaldır') : t('Tümünü seç')}</button></div>
-    {/if}
-    {#each images as im}
-      <div class="row" class:on={picked[im.name]} role="button" tabindex="0"
-           onclick={() => picked[im.name] = !picked[im.name]} onkeydown={(e) => e.key === 'Enter' && (picked[im.name] = !picked[im.name])}>
-        <span class="grow"><b>{im.name}</b><small>{fmt(im.size)}{place(im.name) ? ' · ' + t(place(im.name)) : ''}</small></span><span class="sw"></span>
-      </div>
-    {/each}
-    {#if images.length}<div style="height:80px"></div>{/if}
-    <button class="fab" disabled={!info || !steps.length || !!busy} onclick={() => confirmOpen = true}><Zap size={22} /> {t('Flaşla ({n})', { n: names.length })}</button>
-
-    {/if}
-
-  {:else if tab === 'payload'}
-    <section class="card">
-      <div class="row" style="cursor:default"><Package size={26} /><span class="grow"><b>Payload Dumper</b><small>{t('OTA zip dosyası veya Payload.bin dosyasını seçin')}</small></span></div>
-      <div class="frow"><div class="field"><input id="pp" bind:value={pPath} /><label for="pp">{t('OTA zip / payload.bin yolu')}</label></div>
-        <button class="btn tonal" aria-label="Dosya seç" onclick={async () => pPath = await pick('file', pPath)}><FolderOpen size={22} /></button></div>
-      <p class="sub">{t('Çıktı klasörü: {f}', { f: folder })}</p>
-      <button class="btn tonal" onclick={pRead} disabled={!!busy}>{t('Bölümleri oku')}</button>
-      {#if busy === 'Çıkarılıyor' && owner === 'payload'}
-        <div class="bar"><i style="width:{pProg * 100}%"></i></div><p class="sub">{pCur} · %{Math.round(pProg * 100)}</p>
-        <button class="btn text sm" onclick={() => invoke('payload_cancel')}>{t('Durdur')}</button>
-      {/if}
-    </section>
-    {#if pParts.length}
-      <div class="selbar"><span>{t('{n} bölüm · {m} seçili', { n: pParts.length, m: countOn(pParts, pPick, p => p.name) })}</span>
-        <button class="btn text sm" onclick={() => toggleAll(pParts, pPick, p => p.name)}>{allOn(pParts, pPick, p => p.name) ? t('Seçimi kaldır') : t('Tümünü seç')}</button></div>
-    {/if}
-    {#each pParts as p}
-      <div class="row" class:on={pPick[p.name]} role="button" tabindex="0" onclick={() => pPick[p.name] = !pPick[p.name]} onkeydown={(e) => e.key === 'Enter' && (pPick[p.name] = !pPick[p.name])}>
-        <span class="grow"><b>{p.name}</b><small>{fmt(p.size)}</small></span><span class="sw"></span></div>
-    {/each}
-    {#if pParts.length}<button class="btn wide" onclick={pRun} disabled={!!busy}>{t('Seçilenleri çıkar')}</button>{/if}
-
-  {:else if tab === 'backup'}
-    <section class="card">
       <div class="row" style="cursor:default"><DatabaseBackup size={26} /><span class="grow"><b>{t('Yedekle / Geri Yükle')}</b><small>{t('ADB Shell Root iznini verdiğinizden emin olun')}</small></span></div>
       <div class="frow"><div class="field"><input id="bo" bind:value={bkDir} /><label for="bo">{t('Yedek klasörü (bu telefonda)')}</label></div>
         <button class="btn tonal" aria-label="Klasör seç" onclick={async () => bkDir = await pick('dir', bkDir)}><FolderOpen size={22} /></button></div>
@@ -396,7 +429,7 @@
         {#if rootState}<span class="chip ok">Root: {rootState}</span>{/if}</div>
       <div class="field"><input id="bq" bind:value={bkQ} /><label for="bq">{t('Paket adı ara')}</label></div>
       {#if !adbInfo}<p class="sub">{t('Yedeklemek için önce Cihaz sekmesinden ADB ile bağlan.')}</p>{/if}
-      {#if (busy === 'Yedekleniyor' || busy === 'Geri yükleniyor') && owner === 'backup'}
+      {#if (busy === 'Yedekleniyor' || busy === 'Geri yükleniyor') && owner === 'extra'}
         <div class="bar"><i style="width:{bkProg * 100}%"></i></div><p class="sub">{bkCur}</p>
         <button class="btn text sm" onclick={() => { invoke('bk_cancel'); log(t('Durduruluyor…')); }}>{t('Durdur')}</button>
       {/if}
@@ -423,6 +456,7 @@
         <span class="grow"><b>{t('SSAID’i de geri yükle')}</b><small>{t('Sistem dosyasını değiştirir (riskli); sonra cihazı yeniden başlat')}</small></span><span class="sw"></span></div>
       <button class="btn tonal wide" onclick={bkRestore} disabled={!adbInfo || !!busy || !countOn(bkItems, rPick, i => i.pkg)}>{t('Seçilenleri geri yükle')}</button>{/if}
 
+    {/if}
   {:else}
     <div class="group">
       <button class="btn" class:sel={sub === 'general'} onclick={() => sub = 'general'}>{t('Genel')}</button>

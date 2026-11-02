@@ -96,7 +96,7 @@ async fn flash_image(app: AppHandle, partition: String, path: String) -> Result<
 #[derive(Default)]
 struct AdbS(Mutex<Option<adb::Adb>>);
 #[derive(Serialize)]
-struct AdbInfo { model: String, android: String, serial: String }
+struct AdbInfo { model: String, android: String, serial: String, state: String }
 
 #[tauri::command]
 async fn adb_connect(app: AppHandle, name: String) -> Result<AdbInfo, String> {
@@ -113,10 +113,42 @@ async fn adb_connect(app: AppHandle, name: String) -> Result<AdbInfo, String> {
         });
         let mut a = rx.recv_timeout(std::time::Duration::from_secs(90))
             .map_err(|_| "ADB yetkilendirme zaman aşımı (hedef cihazda izni onayla ve yeniden dene)".to_string())??;
-        let mut gp = |k: &str| a.exec(&format!("getprop {k}")).unwrap_or_default().trim().to_string();
-        let info = AdbInfo { model: gp("ro.product.model"), android: gp("ro.build.version.release"), serial: gp("ro.serialno") };
+        let state = a.state();
+        // Sideload modunda (minadbd) kabuk/getprop yok; yalnızca sideload hizmeti çalışır.
+        let info = if state == "sideload" { AdbInfo { model: "Sideload".into(), android: String::new(), serial: String::new(), state } } else {
+            let mut gp = |k: &str| a.exec(&format!("getprop {k}")).unwrap_or_default().trim().to_string();
+            AdbInfo { model: gp("ro.product.model"), android: gp("ro.build.version.release"), serial: gp("ro.serialno"), state }
+        };
         *app.state::<AdbS>().0.lock().unwrap() = Some(a);
         Ok(info)
+    }).await
+}
+
+#[tauri::command]
+fn adb_state(app: AppHandle) -> Result<String, String> { with_adb(&app, |a| Ok(a.state())) }
+
+#[tauri::command]
+fn sideload_cancel() { adb::SIDELOAD_CANCEL.store(true, std::sync::atomic::Ordering::Relaxed); }
+
+/// Sends a zip (ROM / OTA / any package) to a device that is in recovery's "Apply update from ADB" mode.
+#[tauri::command]
+async fn adb_sideload(app: AppHandle, path: String) -> Result<String, String> {
+    blocking(move || {
+        adb::SIDELOAD_CANCEL.store(false, std::sync::atomic::Ordering::Relaxed);
+        let size = std::fs::metadata(&path).map_err(|x| format!("{path}: {x}"))?.len();
+        if size == 0 { return Err("dosya boş".to_string()); }
+        let mut f = std::fs::File::open(&path).map_err(|x| format!("{path}: {x}"))?;
+        let ap = app.clone();
+        let mut last = std::time::Instant::now() - std::time::Duration::from_secs(1);
+        let mut cb = move |d: u64, t: u64| {
+            if d >= t || last.elapsed() >= std::time::Duration::from_millis(150) { last = std::time::Instant::now(); let _ = ap.emit("sideload-progress", (d, t)); }
+        };
+        with_adb(&app, |a| {
+            let st = a.state();
+            if st != "sideload" { return Err(format!("cihaz sideload modunda değil (durum: {st})")); }
+            a.sideload(&mut f, size, &mut cb)
+        })?;
+        Ok("Sideload tamamlandı".to_string())
     }).await
 }
 
@@ -273,7 +305,7 @@ pub fn run() {
         .plugin(usb::init())
         .manage(State::default())
         .manage(AdbS::default())
-        .invoke_handler(tauri::generate_handler![usb_list, usb_connect, usb_disconnect, fb_command, scan_images, flash_image, payload_list, payload_extract, payload_cancel, adb_connect, adb_disconnect, adb_exec, adb_root_check, adb_reboot, bk_packages, bk_backup, bk_restore, bk_list, bk_cancel, pick_folder, pick_file, fb_wipe, fb_logical, storage_granted, storage_request, bg_granted, bg_request, keep_alive, ksu_detect_kmi, ksu_install_manager, ksu_flash, ksu::ksu_releases, ksu::ksu_scan, ksu::ksu_patch])
+        .invoke_handler(tauri::generate_handler![usb_list, usb_connect, usb_disconnect, fb_command, scan_images, flash_image, payload_list, payload_extract, payload_cancel, adb_connect, adb_disconnect, adb_state, adb_sideload, sideload_cancel, adb_exec, adb_root_check, adb_reboot, bk_packages, bk_backup, bk_restore, bk_list, bk_cancel, pick_folder, pick_file, fb_wipe, fb_logical, storage_granted, storage_request, bg_granted, bg_request, keep_alive, ksu_detect_kmi, ksu_install_manager, ksu_flash, ksu::ksu_releases, ksu::ksu_scan, ksu::ksu_patch])
         .run(tauri::generate_context!())
         .expect("error while running Linux Flasher");
 }

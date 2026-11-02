@@ -4,14 +4,18 @@ use futures_lite::future::block_on;
 use nusb::{transfer::RequestBuffer, Interface};
 use rsa::{pkcs8::{DecodePrivateKey, EncodePrivateKey}, traits::PublicKeyParts, BigUint, Pkcs1v15Sign, RsaPrivateKey};
 use sha1::Sha1;
-use std::{cell::RefCell, collections::VecDeque, io::Read, os::fd::{FromRawFd, OwnedFd}, path::Path, time::Duration};
+use std::{cell::RefCell, collections::VecDeque, io::{Read, Seek, SeekFrom}, os::fd::{FromRawFd, OwnedFd}, path::Path, sync::atomic::{AtomicBool, Ordering}, time::Duration};
+
+/// Set to stop a running sideload transfer.
+pub static SIDELOAD_CANCEL: AtomicBool = AtomicBool::new(false);
+const SIDELOAD_BLOCK: u64 = 64 * 1024;
 
 const CNXN: u32 = 0x4e584e43; const AUTH: u32 = 0x48545541; const OPEN: u32 = 0x4e45504f;
 const OKAY: u32 = 0x59414b4f; const CLSE: u32 = 0x45534c43; const WRTE: u32 = 0x45545257;
 const MAXDATA: u32 = 1024 * 1024;
 fn e<E: std::fmt::Display>(x: E) -> String { x.to_string() }
 
-pub struct Adb { iface: Interface, ep_in: u8, ep_out: u8, rx: VecDeque<u8>, mps: usize, max: usize, next: u32, hist: RefCell<VecDeque<String>> }
+pub struct Adb { pub banner: String, iface: Interface, ep_in: u8, ep_out: u8, rx: VecDeque<u8>, mps: usize, max: usize, next: u32, hist: RefCell<VecDeque<String>> }
 fn cn(c: u32) -> &'static str { match c { CNXN => "CNXN", AUTH => "AUTH", OPEN => "OPEN", OKAY => "OKAY", CLSE => "CLSE", WRTE => "WRTE", _ => "????" } }
 struct Pkt { cmd: u32, a0: u32, a1: u32, data: Vec<u8> }
 
@@ -57,14 +61,14 @@ impl Adb {
         if dup < 0 { return Err("dup() failed".into()); }
         let dev = nusb::Device::from_fd(unsafe { OwnedFd::from_raw_fd(dup) }).map_err(e)?;
         let iface = dev.claim_interface(iface).map_err(e)?;
-        let mut a = Self { iface, ep_in, ep_out, rx: VecDeque::new(), mps: (mps as usize).max(64), max: 4096, next: 1, hist: RefCell::new(VecDeque::new()) };
+        let mut a = Self { banner: String::new(), iface, ep_in, ep_out, rx: VecDeque::new(), mps: (mps as usize).max(64), max: 4096, next: 1, hist: RefCell::new(VecDeque::new()) };
         let key = load_key(key_path)?;
         a.send(CNXN, 0x01000001, MAXDATA, b"host::\0")?;
         let (mut signed, mut pubs) = (false, 0);
         loop {
             let p = a.read()?;
             match p.cmd {
-                CNXN => { a.max = (p.a1 as usize).clamp(4096, MAXDATA as usize); return Ok(a); }
+                CNXN => { a.max = (p.a1 as usize).clamp(4096, MAXDATA as usize); a.banner = String::from_utf8_lossy(&p.data).trim_end_matches('\0').to_string(); return Ok(a); }
                 AUTH if p.a0 == 1 => {
                     if !signed {
                         let sig = key.sign(Pkcs1v15Sign::new::<Sha1>(), &p.data).map_err(e)?;
@@ -76,6 +80,67 @@ impl Adb {
                         a.send(AUTH, 3, 0, &pk)?; pubs += 1; on_auth();
                     }
                 }
+                _ => {}
+            }
+        }
+    }
+    /// Connection state announced by the device in its CNXN banner: "device", "recovery", "sideload", ...
+    pub fn state(&self) -> String { self.banner.split("::").next().unwrap_or("").to_string() }
+
+    /// Waits for the device's OKAY for our last WRTE; request bytes that arrive in the meantime are kept in `req`.
+    fn wait_ok(&mut self, id: u32, remote: u32, req: &mut Vec<u8>) -> Result<(), String> {
+        loop {
+            let p = self.read()?;
+            if p.a1 != id { self.foreign(&p)?; continue; }
+            match p.cmd {
+                OKAY => return Ok(()),
+                WRTE => { self.send(OKAY, id, remote, &[])?; req.extend_from_slice(&p.data); }
+                CLSE => return Err("cihaz bağlantıyı kapattı".into()),
+                _ => {}
+            }
+        }
+    }
+
+    /// `adb sideload`: service `sideload-host:<size>:<block>`. The device asks for 64 KiB blocks by number (8 ASCII digits);
+    /// the host answers each request with exactly that block (the last one may be shorter) until the device says DONEDONE.
+    pub fn sideload(&mut self, f: &mut std::fs::File, size: u64, progress: &mut dyn FnMut(u64, u64)) -> Result<(), String> {
+        let id = self.next; self.next += 1;
+        self.send(OPEN, id, 0, format!("sideload-host:{size}:{SIDELOAD_BLOCK}\0").as_bytes())?;
+        let remote = loop {
+            let p = self.read()?;
+            if p.a1 != id { self.foreign(&p)?; continue; }
+            match p.cmd {
+                OKAY => break p.a0,
+                CLSE => return Err(format!("cihaz sideload isteğini reddetti [{}]", self.dump())),
+                _ => {}
+            }
+        };
+        let mut req: Vec<u8> = vec![];
+        loop {
+            if SIDELOAD_CANCEL.load(Ordering::Relaxed) { let _ = self.send(CLSE, id, remote, &[]); return Err("iptal edildi".into()); }
+            while req.len() >= 8 {
+                let r: Vec<u8> = req.drain(..8).collect();
+                let txt = String::from_utf8_lossy(&r).to_string();
+                if txt == "DONEDONE" { progress(size, size); let _ = self.send(CLSE, id, remote, &[]); return Ok(()); }
+                if txt == "FAILFAIL" { let _ = self.send(CLSE, id, remote, &[]); return Err("cihaz yüklemeyi reddetti (FAILFAIL)".into()); }
+                let block: u64 = txt.trim_matches(|c: char| c == '\0' || c == ' ').parse().map_err(|_| format!("geçersiz blok isteği: {txt:?}"))?;
+                let off = block * SIDELOAD_BLOCK;
+                if off >= size { return Err(format!("cihaz dosya dışında blok istedi: {block}")); }
+                let n = SIDELOAD_BLOCK.min(size - off) as usize;
+                let mut buf = vec![0u8; n];
+                f.seek(SeekFrom::Start(off)).map_err(e)?;
+                f.read_exact(&mut buf).map_err(e)?;
+                for c in buf.chunks(self.max) {
+                    self.send(WRTE, id, remote, c)?;
+                    self.wait_ok(id, remote, &mut req)?;
+                }
+                progress((off + n as u64).min(size), size);
+            }
+            let p = self.read()?;
+            if p.a1 != id { self.foreign(&p)?; continue; }
+            match p.cmd {
+                WRTE => { self.send(OKAY, id, remote, &[])?; req.extend_from_slice(&p.data); }
+                CLSE => return Err("cihaz bağlantıyı kapattı (kurulum cihazda sürüyor olabilir)".into()),
                 _ => {}
             }
         }
