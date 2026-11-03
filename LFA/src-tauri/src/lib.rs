@@ -276,7 +276,7 @@ async fn fb_logical(app: AppHandle, name: String, path: String) -> Result<String
         let s = g.as_ref().ok_or("cihaz bağlı değil")?;
         if s.fb.getvar("serialno") != s.serial { return Err("seri numarası değişti, işlem iptal edildi".to_string()); }
         if s.fb.getvar("is-userspace") != "yes" { return Err("mantıksal bölümler için fastbootd gerekli".to_string()); }
-        let size = std::fs::metadata(&path).map_err(|e| format!("{path}: {e}"))?.len();
+        let size = Fastboot::expanded_size(&path).map_err(|e| format!("{path}: {e}"))?;
         for sfx in ["a", "b"] {
             let _ = s.fb.cmd(&format!("delete-logical-partition:{name}_{sfx}"));
             let _ = s.fb.cmd(&format!("delete-logical-partition:{name}_{sfx}-cow"));

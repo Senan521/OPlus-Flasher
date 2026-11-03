@@ -41,6 +41,7 @@ export const EN = {
   'Hedef cihazda Recovery → Apply update → Apply from ADB seç, sonra aşağıdan denetle.':'On the target device choose Recovery → Apply update → Apply from ADB, then check below.','Sideload modunu denetle':'Check sideload mode','Recovery’ye yeniden başlat':'Reboot to Recovery',
   'Zip dosyası yolu':'Zip file path','Sideload ile yükle':'Install via sideload','Önce cihazın sideload modunda olduğunu denetle.':'First check that the device is in sideload mode.','ADB cihazı bulunamadı':'No ADB device found','ADB durumu: {s}':'ADB state: {s}',
   'Sideload denetleniyor':'Checking sideload','Sideload gönderiliyor':'Sending via sideload','Sideload tamamlandı':'Sideload finished','Extra':'Extra',
+  'Cihaz sideload modunda. Zip göndermek için Flaşla → ADB Sideload sekmesini aç.':'The device is in sideload mode. Open Flash → ADB Sideload to send a zip.',
   // busy labels
   'Bağlanılıyor':'Connecting','Root denetleniyor':'Checking root','Komut çalışıyor':'Running command','Yeniden başlatılıyor':'Rebooting','Taranıyor':'Scanning','Flaşlanıyor':'Flashing','Veriler siliniyor':'Wiping data',
   'Payload okunuyor':'Reading payload','Çıkarılıyor':'Extracting','Uygulamalar okunuyor':'Reading apps','Yedekler okunuyor':'Reading backups','Yedekleniyor':'Backing up','Geri yükleniyor':'Restoring',

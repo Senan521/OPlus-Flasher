@@ -99,6 +99,9 @@ pub fn extract(app: &AppHandle, path: &str, out: &str, names: &[String]) -> Resu
     std::fs::create_dir_all(out).map_err(e)?;
     let parts: Vec<&Part> = s.manifest.parts.iter()
         .filter(|p| p.name.as_ref().map_or(false, |n| names.contains(n) && n != "super")).collect();
+    if let Some(t) = parts.iter().flat_map(|p| p.ops.iter()).map(|o| o.t.unwrap_or(0)).find(|t| !matches!(t, 0 | 1 | 6 | 7 | 8 | 14)) {
+        return Err(format!("desteklenmeyen işlem türü {t} (artımlı OTA desteklenmez, tam OTA kullan)"));
+    }
     let mut files: Vec<File> = vec![];
     for p in &parts {
         let name = p.name.clone().unwrap();

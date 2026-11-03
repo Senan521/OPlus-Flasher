@@ -119,9 +119,16 @@ class UsbPlugin(private val activity: Activity) : Plugin(activity) {
             val root = if (parts[0] == "primary") "/storage/emulated/0" else "/storage/" + parts[0]
             return if (parts[1].isEmpty()) root else root + "/" + parts[1]
         }
+        // İndirilenler sağlayıcısı ("msf:123" veya yalnızca sayı): gerçek yolu MediaStore üzerinden bul
+        val mid = if (id.startsWith("msf:")) id.removePrefix("msf:") else if (id.isNotEmpty() && id.all { it.isDigit() }) id else null
+        if (mid != null) mediaPath(mid)?.let { return it }
         try { activity.contentResolver.query(uri, arrayOf("_data"), null, null, null)?.use { if (it.moveToFirst()) return it.getString(0) } } catch (_: Exception) {}
         return null
     }
+    private fun mediaPath(id: String): String? = try {
+        activity.contentResolver.query(android.provider.MediaStore.Files.getContentUri("external"), arrayOf("_data"), "_id=?", arrayOf(id), null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null }
+    } catch (_: Exception) { null }
 
     // Rust claims the interface itself (nusb); here we only open the device and hand over the fd.
     private fun finish(invoke: Invoke, d: UsbDevice, proto: Int) {

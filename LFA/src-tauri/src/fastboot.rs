@@ -77,6 +77,17 @@ impl Fastboot {
             Reply::Data(_) => Err("unexpected DATA".into()),
         }
     }
+    /// Size the image occupies once flashed: the expanded size for Android-sparse files, the file size otherwise.
+    pub fn expanded_size(path: &str) -> Result<u64, String> {
+        let mut f = File::open(path).map_err(e)?;
+        let len = f.metadata().map_err(e)?.len();
+        let mut h = [0u8; 28];
+        if f.read_exact(&mut h).is_ok() && u32::from_le_bytes(h[0..4].try_into().unwrap()) == 0xED26FF3A {
+            let (blk, total) = (u32::from_le_bytes(h[12..16].try_into().unwrap()) as u64, u32::from_le_bytes(h[16..20].try_into().unwrap()) as u64);
+            if blk > 0 && total > 0 { return Ok(blk * total); }
+        }
+        Ok(len)
+    }
     pub fn getvar(&self, v: &str) -> String { self.cmd(&format!("getvar:{v}")).unwrap_or_default() }
     pub fn flash(&self, part: &str, path: &str, progress: &mut dyn FnMut(u64, u64)) -> Result<(), String> {
         let mut f = File::open(path).map_err(e)?;

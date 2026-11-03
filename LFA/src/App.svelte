@@ -93,10 +93,11 @@
   const steps = $derived.by(() => {
     // oplusstanvbk ve my_region klasörde varsa özel bir şey gerekmez: ilki fastbootd'de _a, ikincisi mantıksal bölüm olarak yazılır.
     const bl = names.filter(n => BL.includes(n)), lo = LOGICAL.filter(n => names.includes(n)), fw = names.filter(n => !BL.includes(n) && !LOGICAL.includes(n));
+    const NOSLOT = new Set(['userdata', 'metadata']); // A/B olmayan bölümler: _a eki yok
     return [
       ...bl.flatMap(n => [{ p: `${n}_a`, n }, { p: `${n}_b`, n }]),
       ...((fw.length || lo.length) && !info?.userspace ? [{ reboot: true }] : []),
-      ...fw.map(n => ({ p: `${n}_a`, n })),
+      ...fw.map(n => ({ p: NOSLOT.has(n) ? n : `${n}_a`, n })),
       ...lo.flatMap(n => [{ logical: n }, { p: `${n}_a`, n }]),
       ...(names.length ? [{ active: 'a' }] : []),
     ];
@@ -151,7 +152,7 @@
   const reboot = (cmd) => guard(cmd, async () => {
     log(`> ${cmd}`); log((await invoke('fb_command', { cmd })) || 'OK'); info = null; connName = '';
   });
-  const checkRoot = () => guard('Root denetleniyor', async () => { rootState = await invoke('adb_root_check'); log(t('Root: {r}', { r: rootState })); }, 'backup');
+  const checkRoot = () => guard('Root denetleniyor', async () => { rootState = await invoke('adb_root_check'); log(t('Root: {r}', { r: rootState })); }, 'extra');
   const shRun = () => guard('Komut çalışıyor', async () => { log(`$ ${shCmd}`); log((await invoke('adb_exec', { cmd: shCmd })).trim() || t('(çıktı yok)')); });
   const adbReboot = (t) => guard('Yeniden başlatılıyor', async () => {
     await invoke('adb_reboot', { target: t }); log(`adb reboot ${t}`); adbInfo = null; rootState = ''; connName = '';
@@ -162,12 +163,18 @@
     images = await invoke('scan_images', { path: folder });
     picked = Object.fromEntries(images.map(i => [i.name, !SKIP.has(i.name)])); log(t('{n} imaj bulundu', { n: images.length }));
   }, 'flash');
-  async function reconnect() {
-    for (let i = 0; i < 40; i++) {
-      await new Promise(r => setTimeout(r, 1000));
+  // Yeniden başlatılan cihaz birkaç saniye eski haliyle listede kalır; önce kaybolmasını bekle, sonra yeni cihaza bağlan.
+  async function reconnect(old) {
+    let gone = false;
+    for (let i = 0; i < 60; i++) {
+      await sleep(1000);
       try {
-        const d = (await invoke('usb_list')).find(x => x.mode === 'fastboot');
-        if (d) { info = await invoke('usb_connect', { name: d.name }); connName = d.name; return; }
+        const fb = (await invoke('usb_list')).find(x => x.mode === 'fastboot');
+        if (!fb) { gone = true; continue; }
+        if (!gone && fb.name === old) continue;
+        const r = await invoke('usb_connect', { name: fb.name });
+        if (!r.serial) continue; // cihaz henüz hazır değil
+        info = r; connName = fb.name; return;
       } catch {}
     }
     throw 'Fastbootd cihazı bulunamadı';
@@ -176,7 +183,7 @@
     confirmOpen = false; ack = false;
     const ok = await guard('Flaşlanıyor', async () => {
       for (const s of steps) {
-        if (s.reboot) { log(t('Fastbootd’a geçiliyor…')); await invoke('fb_command', { cmd: 'reboot-fastboot' }); await reconnect(); log(t('Telefonda dil seçimi çıkarsa English seç')); continue; }
+        if (s.reboot) { log(t('Fastbootd’a geçiliyor…')); const old = connName; await invoke('fb_command', { cmd: 'reboot-fastboot' }); await reconnect(old); log(t('Telefonda dil seçimi çıkarsa English seç')); continue; }
         if (s.logical) { current = s.logical; progress = 0; log(`logical ${s.logical}`); log(await invoke('fb_logical', { name: s.logical, path: `${folder}/${s.logical}.img` })); continue; }
         if (s.active) { current = ''; log(`set_active ${s.active}`); log(await invoke('fb_command', { cmd: `set_active:${s.active}` })); continue; }
         current = s.p; progress = 0; log(`flash ${s.p}`);
@@ -265,6 +272,10 @@
 
     {#if adbInfo}
       <section class="card">
+        {#if adbInfo.state === 'sideload'}
+        <div class="chips"><span class="chip ok">ADB Sideload</span></div>
+        <p class="sub">{t('Cihaz sideload modunda. Zip göndermek için Flaşla → ADB Sideload sekmesini aç.')}</p>
+        {:else}
         <div class="chips"><span class="chip ok">ADB</span><span class="chip">{t('Android {v}', { v: adbInfo.android })}</span></div>
         <div class="kv"><div><small>{t('MODEL')}</small><b>{adbInfo.model}</b></div><div><small>{t('SERİ')}</small><b>{adbInfo.serial}</b></div></div>
         <div class="group">
@@ -273,6 +284,7 @@
         </div>
         <div class="field"><input id="sh" bind:value={shCmd} /><label for="sh">{t('ADB shell komutu')}</label></div>
         <button class="btn tonal sm" onclick={shRun} disabled={!!busy}>{t('Çalıştır')}</button>
+        {/if}
       </section>
     {/if}
     {#if info}
