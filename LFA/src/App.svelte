@@ -314,7 +314,7 @@
 
   {:else if tab === 'flash'}
     <div class="group">
-      <button class="btn" class:sel={flashSub === 'images'} onclick={() => flashSub = 'images'}>{t('İmajlar')}</button>
+      <button class="btn" class:sel={flashSub === 'images'} onclick={() => flashSub = 'images'}>Fastboot Flasher</button>
       <button class="btn" class:sel={flashSub === 'sideload'} onclick={() => flashSub = 'sideload'}>{t('ADB Sideload')}</button>
     </div>
     {#if flashSub === 'sideload'}
