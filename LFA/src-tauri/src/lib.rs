@@ -86,7 +86,7 @@ fn fb_normalize(input: &str) -> Result<String, String> {
 #[tauri::command]
 async fn fb_raw(app: AppHandle, cmd: String) -> Result<String, String> {
     let c = fb_normalize(&cmd)?;
-    let head = c.split(|ch| ch == ':' || ch == ' ').next().unwrap_or("").to_string();
+    let head = c.split(|ch: char| ch == ':' || ch == ' ').next().unwrap_or("").to_string();
     if ["flash", "download", "upload", "boot", "update", "fetch", "stage", "get_staged"].contains(&head.as_str()) {
         return Err("bu komut veri aktarımı gerektirir: Fastboot Flasher sekmesini kullan".into());
     }
