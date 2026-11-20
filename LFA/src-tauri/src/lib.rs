@@ -61,6 +61,45 @@ async fn fb_command(app: AppHandle, cmd: String) -> Result<String, String> {
     }).await
 }
 
+/// Turns a command typed the way it is on the fastboot CLI into the bootloader protocol form
+/// ("getvar all" → "getvar:all", "reboot bootloader" → "reboot-bootloader"). Input that already has a ':' passes through unchanged.
+fn fb_normalize(input: &str) -> Result<String, String> {
+    let t = input.trim();
+    let t = t.strip_prefix("fastboot ").map(str::trim).unwrap_or(t);
+    if t.is_empty() { return Err("komut boş".into()); }
+    if t.len() > 200 || t.chars().any(|c| c.is_control()) { return Err("geçersiz komut".into()); }
+    if let Some(s) = t.strip_prefix("--set-active=") { return Ok(format!("set_active:{}", s.trim())); }
+    let mut it = t.split_whitespace();
+    let first = it.next().unwrap_or("");
+    let args: Vec<&str> = it.collect();
+    if first.contains(':') { return Ok(t.to_string()); }
+    Ok(match (first, args.as_slice()) {
+        ("getvar" | "erase" | "format" | "set_active" | "delete-logical-partition" | "snapshot-update", [a]) => format!("{first}:{a}"),
+        ("create-logical-partition" | "resize-logical-partition", [a, b]) => format!("{first}:{a}:{b}"),
+        ("reboot", [a]) => format!("reboot-{a}"),
+        _ => t.to_string(),
+    })
+}
+
+/// Manually typed fastboot command (bootloader or fastbootd). Commands that need a data phase are refused here;
+/// flashing goes through the Fastboot Flasher tab.
+#[tauri::command]
+async fn fb_raw(app: AppHandle, cmd: String) -> Result<String, String> {
+    let c = fb_normalize(&cmd)?;
+    let head = c.split(|ch| ch == ':' || ch == ' ').next().unwrap_or("").to_string();
+    if ["flash", "download", "upload", "boot", "update", "fetch", "stage", "get_staged"].contains(&head.as_str()) {
+        return Err("bu komut veri aktarımı gerektirir: Fastboot Flasher sekmesini kullan".into());
+    }
+    let secs = match head.as_str() { "erase" | "format" => 300, "flashing" | "oem" => 120, _ => 30 };
+    blocking(move || {
+        let st = app.state::<State>();
+        let mut g = st.0.lock().unwrap();
+        let out = g.as_ref().ok_or("cihaz bağlı değil")?.fb.cmd_all(&c, secs)?;
+        if c.starts_with("reboot") || c == "continue" { *g = None; }
+        Ok(out)
+    }).await
+}
+
 #[tauri::command]
 fn scan_images(path: String) -> Result<Vec<Img>, String> {
     let mut v: Vec<Img> = std::fs::read_dir(&path).map_err(|e| format!("{path}: {e}"))?
@@ -305,7 +344,7 @@ pub fn run() {
         .plugin(usb::init())
         .manage(State::default())
         .manage(AdbS::default())
-        .invoke_handler(tauri::generate_handler![usb_list, usb_connect, usb_disconnect, fb_command, scan_images, flash_image, payload_list, payload_extract, payload_cancel, adb_connect, adb_disconnect, adb_state, adb_sideload, sideload_cancel, adb_exec, adb_root_check, adb_reboot, bk_packages, bk_backup, bk_restore, bk_list, bk_cancel, pick_folder, pick_file, fb_wipe, fb_logical, storage_granted, storage_request, bg_granted, bg_request, keep_alive, ksu_detect_kmi, ksu_install_manager, ksu_flash, ksu::ksu_releases, ksu::ksu_scan, ksu::ksu_patch])
+        .invoke_handler(tauri::generate_handler![usb_list, usb_connect, usb_disconnect, fb_command, fb_raw, scan_images, flash_image, payload_list, payload_extract, payload_cancel, adb_connect, adb_disconnect, adb_state, adb_sideload, sideload_cancel, adb_exec, adb_root_check, adb_reboot, bk_packages, bk_backup, bk_restore, bk_list, bk_cancel, pick_folder, pick_file, fb_wipe, fb_logical, storage_granted, storage_request, bg_granted, bg_request, keep_alive, ksu_detect_kmi, ksu_install_manager, ksu_flash, ksu::ksu_releases, ksu::ksu_scan, ksu::ksu_patch])
         .run(tauri::generate_context!())
         .expect("error while running Linux Flasher");
 }

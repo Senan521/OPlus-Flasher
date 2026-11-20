@@ -100,6 +100,7 @@ nav button.on{color:var(--on-bg);font-weight:700}nav button.on .ind{background:v
 @keyframes fade{from{opacity:0}}@keyframes pop{from{transform:scale(.85);opacity:0}}
 .log{font:12px/1.6 ui-monospace,Menlo,monospace;background:var(--s-low);border-radius:20px;padding:14px;white-space:pre-wrap;word-break:break-all}
 .log .err{color:var(--err)}
+.log.out{max-height:240px;overflow:auto;margin:0;user-select:text;-webkit-user-select:text}
 
 /* 5 sekme için dar gezinme çubuğu */
 nav button{min-width:56px}nav .ind{width:56px}nav button.on .ind{width:64px}

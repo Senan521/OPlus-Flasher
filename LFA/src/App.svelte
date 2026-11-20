@@ -11,7 +11,7 @@
 
   let tab = $state('device');
   let devices = $state([]), info = $state(null), adbInfo = $state(null), connName = $state('');
-  let rootState = $state(''), shCmd = $state('getprop ro.build.fingerprint');
+  let rootState = $state(''), shCmd = $state('getprop ro.build.fingerprint'), shOut = $state(''), fbCmd = $state('getvar all'), fbOut = $state(''), rawAsk = $state(false);
   let folder = $state('/storage/emulated/0/Download/ROM'), images = $state([]), picked = $state({}), progress = $state(0), current = $state('');
   let pPath = $state('/storage/emulated/0/Download/ota.zip'), pParts = $state([]), pPick = $state({}), pProg = $state(0), pCur = $state('');
   let bkDir = $state('/storage/emulated/0/LinuxFlasher/backups'), bkApps = $state([]), bkPick = $state({}), bkItems = $state([]), rPick = $state({}), bkProg = $state(0), bkCur = $state(''), bkQ = $state('');
@@ -153,7 +153,21 @@
     log(`> ${cmd}`); log((await invoke('fb_command', { cmd })) || 'OK'); info = null; connName = '';
   });
   const checkRoot = () => guard('Root denetleniyor', async () => { rootState = await invoke('adb_root_check'); log(t('Root: {r}', { r: rootState })); }, 'extra');
-  const shRun = () => guard('Komut çalışıyor', async () => { log(`$ ${shCmd}`); log((await invoke('adb_exec', { cmd: shCmd })).trim() || t('(çıktı yok)')); });
+  const shRun = () => guard('Komut çalışıyor', async () => { log(`$ ${shCmd}`); const r = (await invoke('adb_exec', { cmd: shCmd })).trim() || t('(çıktı yok)'); shOut = r; log(r); });
+  // Elle fastboot komutu (bootloader ve fastbootd). Kalıcı değişiklik yapabilenler önce onay ister.
+  const RAW_DANGER = /^(fastboot\s+)?(erase|format|flashing|oem|delete-logical|create-logical|resize-logical|snapshot-update|set_active|--set-active)/i;
+  const RAW_LEAVE = /^(fastboot\s+)?(reboot|continue)/i;
+  const fbRun = (force = false) => {
+    if (!fbCmd.trim()) return;
+    if (!force && RAW_DANGER.test(fbCmd.trim())) { rawAsk = true; return; }
+    rawAsk = false;
+    return guard('Komut çalışıyor', async () => {
+      log(`fastboot> ${fbCmd}`);
+      const r = (await invoke('fb_raw', { cmd: fbCmd })).trim() || 'OK';
+      fbOut = r; log(r);
+      if (RAW_LEAVE.test(fbCmd.trim())) { info = null; connName = ''; }
+    });
+  };
   const adbReboot = (t) => guard('Yeniden başlatılıyor', async () => {
     await invoke('adb_reboot', { target: t }); log(`adb reboot ${t}`); adbInfo = null; rootState = ''; connName = '';
   });
@@ -284,6 +298,7 @@
         </div>
         <div class="field"><input id="sh" bind:value={shCmd} /><label for="sh">{t('ADB shell komutu')}</label></div>
         <button class="btn tonal sm" onclick={shRun} disabled={!!busy}>{t('Çalıştır')}</button>
+        {#if shOut}<pre class="log out">{shOut}</pre>{/if}
         {/if}
       </section>
     {/if}
@@ -300,6 +315,10 @@
           <button class="btn" onclick={() => reboot('reboot-bootloader')}>Bootloader</button>
           <button class="btn" onclick={() => reboot('reboot-fastboot')}>Fastbootd</button>
         </div>
+        <div class="field"><input id="fc" bind:value={fbCmd} autocapitalize="off" autocomplete="off" spellcheck="false" onkeydown={(e) => e.key === 'Enter' && fbRun()} /><label for="fc">{t('Fastboot komutu')}</label></div>
+        <div class="chips">{#each ['getvar all', 'getvar current-slot', 'getvar is-userspace', 'oem device-info'] as c}<button class="chip" onclick={() => fbCmd = c}>{c}</button>{/each}</div>
+        <button class="btn tonal sm" onclick={() => fbRun()} disabled={!!busy || !fbCmd.trim()}>{t('Çalıştır')}</button>
+        {#if fbOut}<pre class="log out">{fbOut}</pre>{/if}
       </section>
     {/if}
     {#if !info && !adbInfo}
@@ -513,6 +532,19 @@
         <span class="grow">{t('Yedeğim var, riski anlıyorum')}</span><span class="sw"></span></div>
       <div class="acts"><button class="btn text" onclick={() => confirmOpen = false}>{t('Vazgeç')}</button>
         <button class="btn danger" disabled={!ack} onclick={run}>{t('Başlat')}</button></div>
+    </div>
+  </div>
+{/if}
+
+{#if rawAsk}
+  <div class="scrim" role="presentation" onclick={() => rawAsk = false}>
+    <div class="dialog" role="dialog" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={() => {}}>
+      <ShieldAlert size={32} color="var(--err)" />
+      <h2>{t('Komutu gönder?')}</h2>
+      <p class="sub"><b>{fbCmd}</b></p>
+      <p class="sub">{t('Bu komut cihazda kalıcı değişiklik yapabilir. Ne yaptığından eminsen gönder.')}</p>
+      <div class="acts"><button class="btn text" onclick={() => rawAsk = false}>{t('Vazgeç')}</button>
+        <button class="btn danger" onclick={() => fbRun(true)}>{t('Gönder')}</button></div>
     </div>
   </div>
 {/if}

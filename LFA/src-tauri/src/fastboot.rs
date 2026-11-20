@@ -77,6 +77,15 @@ impl Fastboot {
             Reply::Data(_) => Err("unexpected DATA".into()),
         }
     }
+    /// Like `cmd`, but returns every INFO/TEXT line followed by the final OKAY text (for manually typed commands).
+    pub fn cmd_all(&self, c: &str, secs: u64) -> Result<String, String> {
+        self.send(c.as_bytes())?;
+        let mut info = vec![];
+        match self.reply(&mut info, secs)? {
+            Reply::Okay(s) => { if !s.is_empty() { info.push(s); } Ok(info.join("\n")) }
+            Reply::Data(_) => Err("cihaz veri istedi (bu komut elle gönderilemez)".into()),
+        }
+    }
     /// Size the image occupies once flashed: the expanded size for Android-sparse files, the file size otherwise.
     pub fn expanded_size(path: &str) -> Result<u64, String> {
         let mut f = File::open(path).map_err(e)?;

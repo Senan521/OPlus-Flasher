@@ -42,6 +42,7 @@ export const EN = {
   'Zip dosyası yolu':'Zip file path','Sideload ile yükle':'Install via sideload','Önce cihazın sideload modunda olduğunu denetle.':'First check that the device is in sideload mode.','ADB cihazı bulunamadı':'No ADB device found','ADB durumu: {s}':'ADB state: {s}',
   'Sideload denetleniyor':'Checking sideload','Sideload gönderiliyor':'Sending via sideload','Sideload tamamlandı':'Sideload finished','Extra':'Extra',
   'Cihaz sideload modunda. Zip göndermek için Flaşla → ADB Sideload sekmesini aç.':'The device is in sideload mode. Open Flash → ADB Sideload to send a zip.',
+  'Fastboot komutu':'Fastboot command','Komutu gönder?':'Send the command?','Bu komut cihazda kalıcı değişiklik yapabilir. Ne yaptığından eminsen gönder.':'This command can make permanent changes on the device. Send it only if you are sure.','Gönder':'Send',
   // busy labels
   'Bağlanılıyor':'Connecting','Root denetleniyor':'Checking root','Komut çalışıyor':'Running command','Yeniden başlatılıyor':'Rebooting','Taranıyor':'Scanning','Flaşlanıyor':'Flashing','Veriler siliniyor':'Wiping data',
   'Payload okunuyor':'Reading payload','Çıkarılıyor':'Extracting','Uygulamalar okunuyor':'Reading apps','Yedekler okunuyor':'Reading backups','Yedekleniyor':'Backing up','Geri yükleniyor':'Restoring',
