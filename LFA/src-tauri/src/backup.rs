@@ -262,11 +262,13 @@ fn restore_pkg(app: &AppHandle, a: &mut Adb, cx: &Cx, pkg: &str, dir: &Path, idx
             let hint = if r.contains("USER_RESTRICTED") { " (hedef cihazda Geliştirici seçenekleri > “USB ile yüklemeye izin ver” açık olmalı)" } else { "" };
             return Err(format!("kurulum başarısız: {}{hint}", r.trim()));
         }
+        bk_log(app, format!("{pkg}: APK kuruldu"));
     }
+    bk_log(app, format!("{pkg}: uygulama durduruluyor"));
     let _ = a.exec(&format!("am force-stop {pkg}"));
     for (k, sz) in &tars {
         let base = KINDS.iter().find(|(nm, _)| *nm == k.as_str()).unwrap().1;
-        bk_log(app, format!("{pkg}: veri geri yükleniyor ({k})"));
+        bk_log(app, format!("{pkg}: {k} arşivi cihaza aktarılıyor ({} MB)", sz / 1_048_576));
         let tmp = format!("/data/local/tmp/lf_{k}.tar");
         {
             let mut rd = CountRead { f: File::open(dir.join(format!("{k}.tar"))).map_err(e)?, pr: &mut pr };
@@ -274,9 +276,19 @@ fn restore_pkg(app: &AppHandle, a: &mut Adb, cx: &Cx, pkg: &str, dir: &Path, idx
         }
         let got = a.exec(&format!("stat -c %s {tmp}"))?.trim().parse::<u64>().unwrap_or(0);
         if got != *sz { let _ = a.exec(&format!("rm -f {tmp}")); return Err(format!("{k}.tar cihaza eksik gönderildi ({got}/{sz})")); }
-        let r = a.exec(&cx.c(&format!("tar -x -C {base} -f {tmp} 2>&1; echo EXIT:$?")))?;
+        bk_log(app, format!("{pkg}: {k} dosyaları açılıyor (büyük arşivlerde dakikalar sürebilir)"));
+        // -v: her dosya bir satır yazdırır; böylece ilerleme görülür ve cihaz sessiz kalmaz. Yalnızca son 4 KB (EXIT satırı için) saklanır.
+        let (mut tail, mut files, mut last) = (Vec::<u8>::new(), 0usize, std::time::Instant::now());
+        a.run(&format!("exec:{}", cx.c(&format!("tar -xv -C {base} -f {tmp} 2>&1; echo EXIT:$?"))), None, &mut |d| {
+            files += d.iter().filter(|&&b| b == b'\n').count();
+            tail.extend_from_slice(d);
+            if tail.len() > 8192 { let cut = tail.len() - 4096; tail.drain(..cut); }
+            if last.elapsed() >= std::time::Duration::from_secs(3) { last = std::time::Instant::now(); bk_log(app, format!("{pkg}: {k} — {files} dosya açıldı")); }
+        })?;
+        let r = String::from_utf8_lossy(&tail).to_string();
         let _ = a.exec(&format!("rm -f {tmp}"));
         if !r.trim_end().ends_with("EXIT:0") { return Err(format!("tar -x başarısız: {}", r.trim())); }
+        bk_log(app, format!("{pkg}: {k} — {files} dosya açıldı, sahiplik ve SELinux etiketleri düzeltiliyor"));
         if k != "ext" {
             let uid = a.exec(&cx.c(&format!("stat -c %u {base}/{pkg}")))?.trim().to_string();
             if uid.is_empty() || !uid.chars().all(|c| c.is_ascii_digit()) { return Err("uid okunamadı".into()); }
@@ -284,6 +296,7 @@ fn restore_pkg(app: &AppHandle, a: &mut Adb, cx: &Cx, pkg: &str, dir: &Path, idx
         }
         a.exec(&cx.c(&format!("restorecon -RF {base}/{pkg}")))?;
     }
+    bk_log(app, format!("{pkg}: veri geri yüklendi"));
     if let Some(p) = fs::read(dir.join("perms.json")).ok().and_then(|b| serde_json::from_slice::<Perms>(&b).ok()) { apply_perms(app, a, cx, pkg, &p, ssaid); }
     Ok(())
 }

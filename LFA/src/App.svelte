@@ -14,7 +14,7 @@
   let rootState = $state(''), shCmd = $state('getprop ro.build.fingerprint'), shOut = $state(''), fbCmd = $state('getvar all'), fbOut = $state(''), rawAsk = $state(false);
   let folder = $state('/storage/emulated/0/Download/ROM'), images = $state([]), picked = $state({}), progress = $state(0), current = $state('');
   let pPath = $state('/storage/emulated/0/Download/ota.zip'), pParts = $state([]), pPick = $state({}), pProg = $state(0), pCur = $state('');
-  let bkDir = $state('/storage/emulated/0/LinuxFlasher/backups'), bkApps = $state([]), bkPick = $state({}), bkItems = $state([]), rPick = $state({}), bkProg = $state(0), bkCur = $state(''), bkQ = $state('');
+  let bkDir = $state('/storage/emulated/0/LinuxFlasher/backups'), bkApps = $state([]), bkPick = $state({}), bkItems = $state([]), rPick = $state({}), bkProg = $state(0), bkCur = $state(''), bkStage = $state(''), bkQ = $state('');
   let sub = $state('general'), theme = $state('system'), autoConnect = $state(true);
   const store = { get(k, d) { try { return localStorage.getItem(k) ?? d; } catch { return d; } }, set(k, v) { try { localStorage.setItem(k, v); } catch {} } };
   function applyTheme() { const r = document.documentElement; if (theme === 'system') r.removeAttribute('data-theme'); else r.setAttribute('data-theme', theme); }
@@ -225,11 +225,15 @@
   // ---- yedek ----
   const bkLoad = () => guard('Uygulamalar okunuyor', async () => { bkApps = await invoke('bk_packages'); bkPick = {}; log(t('{n} kullanıcı uygulaması', { n: bkApps.length })); }, 'extra');
   const bkScan = () => guard('Yedekler okunuyor', async () => { bkItems = await invoke('bk_list', { out: bkDir }); rPick = {}; log(t('{n} yedek bulundu', { n: bkItems.length })); }, 'extra');
+  // İşlem başlayınca ilerleme kartına kaydır (liste uzunsa kullanıcı göstergeyi göremiyordu).
+  const toProgress = () => setTimeout(() => document.getElementById('bk-progress')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
   const bkRun = () => guard('Yedekleniyor', async () => {
+    bkStage = ''; toProgress();
     await invoke('bk_backup', { pkgs: bkApps.filter(p => bkPick[p]), out: bkDir }); log(t('Yedekleme bitti')); bkItems = await invoke('bk_list', { out: bkDir });
   }, 'extra');
   let ssaidOn = $state(store.get('lf.ssaid', '0') === '1');
   const bkRestore = () => guard('Geri yükleniyor', async () => {
+    bkStage = ''; toProgress();
     await invoke('bk_restore', { pkgs: bkItems.filter(i => rPick[i.pkg]).map(i => i.pkg), out: bkDir, ssaid: ssaidOn }); log(t('Geri yükleme bitti'));
   }, 'extra');
 
@@ -248,7 +252,7 @@
       listen('bk-progress', (e) => { const [n, d, t] = e.payload; bkCur = n; bkProg = t ? d / t : 0; }),
       listen('adb-auth', () => log(t('Hedef cihazın ekranında USB hata ayıklama iznini onayla'))),
       listen('ksu-log', (e) => { ksuLast = e.payload; log(e.payload); }),
-      listen('bk-log', (e) => log(e.payload)),
+      listen('bk-log', (e) => { bkStage = e.payload; log(e.payload); }),
       listen('tauri://focus', checkStorage),
     ];
     return () => { clearInterval(iv); document.removeEventListener('visibilitychange', vis); subs.forEach(s => s.then(f => f())); };
@@ -461,7 +465,9 @@
       <div class="field"><input id="bq" bind:value={bkQ} /><label for="bq">{t('Paket adı ara')}</label></div>
       {#if !adbInfo}<p class="sub">{t('Yedeklemek için önce Cihaz sekmesinden ADB ile bağlan.')}</p>{/if}
       {#if (busy === 'Yedekleniyor' || busy === 'Geri yükleniyor') && owner === 'extra'}
-        <div class="bar"><i style="width:{bkProg * 100}%"></i></div><p class="sub">{bkCur}</p>
+        <div id="bk-progress" style="scroll-margin-top:72px"><p class="sub"><b>{t(busy)}</b></p>
+        <div class="bar"><i style="width:{bkProg * 100}%"></i></div><p class="sub">{bkCur} · %{Math.round(bkProg * 100)}</p>
+        {#if bkStage}<p class="sub">{bkStage}</p>{/if}</div>
         <button class="btn text sm" onclick={() => { invoke('bk_cancel'); log(t('Durduruluyor…')); }}>{t('Durdur')}</button>
       {/if}
     </section>
